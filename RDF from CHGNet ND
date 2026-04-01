@@ -1,0 +1,144 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from ase.io import read
+from ase.neighborlist import neighbor_list
+
+# ---------------- PARAMETERS ---------------- #
+traj_file = "md.traj"
+poscar_file = "POSCAR"
+
+r_max = 8.0
+dr = 0.05
+dt_ps = 0.001
+
+stride = 50
+n_avg_frames = 50
+
+# ---------------- LOAD CELL ---------------- #
+atoms0 = read(poscar_file)
+cell = atoms0.get_cell()
+volume = atoms0.get_volume()
+
+# ---------------- READ TRAJECTORY ---------------- #
+traj = read(traj_file, f"::{stride}")
+
+for atoms in traj:
+    atoms.set_cell(cell)
+    atoms.set_pbc(True)
+
+# ---------------- SPLIT ---------------- #
+traj_15ps = traj[:int(15/(dt_ps*stride))]
+traj_full = traj[-n_avg_frames:]
+
+# ---------------- RDF FUNCTION ---------------- #
+def compute_rdf(traj, pair):
+
+    bins = np.arange(0, r_max + dr, dr)
+    r_centers = 0.5 * (bins[:-1] + bins[1:])
+    hist = np.zeros(len(r_centers))
+
+    symbols = traj[0].get_chemical_symbols()
+
+    # number density
+    rho = symbols.count(pair[1]) / volume
+    N_i = symbols.count(pair[0])
+
+    for atoms in traj:
+
+        i, j, d = neighbor_list("ijd", atoms, r_max)
+
+        for idx in range(len(d)):
+
+            sp_i = symbols[i[idx]]
+            sp_j = symbols[j[idx]]
+
+            if (sp_i, sp_j) == pair:
+
+                r = d[idx]
+                bin_idx = int(r / dr)
+
+                if bin_idx < len(hist):
+                    hist[bin_idx] += 1
+
+    # normalization
+    n_frames = len(traj)
+
+    for k, r in enumerate(r_centers):
+
+        shell_vol = 4 * np.pi * r**2 * dr
+        norm = rho * shell_vol * N_i * n_frames
+
+        if norm > 0:
+            hist[k] /= norm
+
+    return r_centers, hist
+
+# ---------------- COMPUTE ---------------- #
+print("Computing RDF...")
+
+r_cc_15, g_cc_15 = compute_rdf(traj_15ps, ("Cu","Cu"))
+r_co_15, g_co_15 = compute_rdf(traj_15ps, ("Cu","O"))
+
+r_cc_full, g_cc_full = compute_rdf(traj_full, ("Cu","Cu"))
+r_co_full, g_co_full = compute_rdf(traj_full, ("Cu","O"))
+
+# ---------------- SAVE ---------------- #
+np.savetxt("rdf_Cu-Cu_15ps.dat", np.column_stack([r_cc_15, g_cc_15]))
+np.savetxt("rdf_Cu-O_15ps.dat", np.column_stack([r_co_15, g_co_15]))
+
+np.savetxt("rdf_Cu-Cu_full.dat", np.column_stack([r_cc_full, g_cc_full]))
+np.savetxt("rdf_Cu-O_full.dat", np.column_stack([r_co_full, g_co_full]))
+
+# ---------------- PLOT ---------------- #
+plt.figure(figsize=(6,5))
+
+plt.plot(r_cc_15, g_cc_15, label="Cu-Cu (15 ps)")
+plt.plot(r_cc_full, g_cc_full, "--", label="Cu-Cu (full eq)")
+
+plt.plot(r_co_15, g_co_15, label="Cu-O (15 ps)")
+plt.plot(r_co_full, g_co_full, "--", label="Cu-O (full eq)")
+
+plt.xlabel("r (Å)")
+plt.ylabel("g(r)")
+plt.legend()
+
+plt.savefig("rdf_final.png", dpi=300)
+plt.show()
+
+print("✅ RDF computed correctly (fast + no ASE issues)")
+# ---------------- FIND PEAKS ---------------- #
+def find_peaks(r, g, pair_name):
+
+    peaks = []
+
+    for i in range(1, len(g)-1):
+        if g[i] > g[i-1] and g[i] > g[i+1]:
+            peaks.append((r[i], g[i]))
+
+    # sort by height
+    peaks = sorted(peaks, key=lambda x: x[1], reverse=True)
+
+    # take top 3 peaks (you can change this)
+    top_peaks = peaks[:3]
+
+    return top_peaks
+
+
+# ---------------- WRITE PEAKS ---------------- #
+with open("rdf_peaks.txt", "w") as f:
+
+    for label, (r_vals, g_vals) in {
+        "Cu-Cu (15 ps)": (r_cc_15, g_cc_15),
+        "Cu-Cu (full)": (r_cc_full, g_cc_full),
+        "Cu-O (15 ps)": (r_co_15, g_co_15),
+        "Cu-O (full)": (r_co_full, g_co_full),
+    }.items():
+
+        peaks = find_peaks(r_vals, g_vals, label)
+
+        f.write(f"{label} peaks:\n")
+        for r_p, g_p in peaks:
+            f.write(f"  r = {r_p:.3f} Å, g(r) = {g_p:.4f}\n")
+        f.write("\n")
+
+print("✅ Peak values written to rdf_peaks.txt")
