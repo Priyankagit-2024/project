@@ -1,0 +1,63 @@
+from ase.io import read
+import numpy as np
+
+# -------- SETTINGS --------
+traj_file = "md.traj"
+cutoff_CuCu = 3.025
+cutoff_CuO  = 1.825
+
+# -------- LOAD LAST FRAME --------
+atoms = read(traj_file, index=-1)
+
+positions = atoms.get_positions()
+symbols = atoms.get_chemical_symbols()
+cell = atoms.get_cell()
+pbc = atoms.get_pbc()
+
+# -------- FUNCTION: distance with PBC --------
+def distance(i, j):
+    rij = positions[j] - positions[i]
+    rij -= np.round(rij @ np.linalg.inv(cell)) @ cell  # minimum image
+    return np.linalg.norm(rij)
+
+# -------- COMPUTE CN --------
+cu_indices = [i for i, s in enumerate(symbols) if s == "Cu"]
+o_indices  = [i for i, s in enumerate(symbols) if s == "O"]
+
+cn_cucu = []
+cn_cuo  = []
+
+for i in cu_indices:
+    count_cucu = 0
+    count_cuo = 0
+
+    for j in cu_indices:
+        if i != j:
+            if distance(i, j) <= cutoff_CuCu:
+                count_cucu += 1
+
+    for j in o_indices:
+        if distance(i, j) <= cutoff_CuO:
+            count_cuo += 1
+
+    cn_cucu.append(count_cucu)
+    cn_cuo.append(count_cuo)
+
+# -------- OUTPUT --------
+print("Cu–Cu CN (per atom):", cn_cucu)
+print("Cu–O  CN (per atom):", cn_cuo)
+
+print("\nAverage Cu–Cu CN:", np.mean(cn_cucu))
+print("Average Cu–O  CN:", np.mean(cn_cuo))
+
+# -------- SAVE --------
+with open("coordination_numbers.txt", "w") as f:
+    f.write("Atom_ID   Cu-Cu_CN   Cu-O_CN\n")
+    for idx, (c1, c2) in zip(cu_indices, zip(cn_cucu, cn_cuo)):
+        f.write(f"{idx+1:5d}   {c1:8d}   {c2:8d}\n")
+
+    f.write("\n")
+    f.write(f"Average Cu-Cu CN: {np.mean(cn_cucu):.4f}\n")
+    f.write(f"Average Cu-O  CN: {np.mean(cn_cuo):.4f}\n")
+
+print("\nSaved to coordination_numbers.txt")
