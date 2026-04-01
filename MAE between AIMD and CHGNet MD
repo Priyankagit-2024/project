@@ -1,0 +1,89 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+HARTREE_TO_EV = 27.2114
+
+# -----------------------------
+# READ AIMD (CP2K) ENERGY
+# -----------------------------
+aimd_E = []
+
+with open("cu-pos-1.xyz") as f:
+    for line in f:
+        if "E =" in line:
+            energy_au = float(line.split("E =")[1].strip())
+            energy_ev = energy_au * HARTREE_TO_EV
+            aimd_E.append(energy_ev)
+
+aimd_E = np.array(aimd_E)
+
+# -----------------------------
+# READ CHGNET ENERGY
+# -----------------------------
+chgnet_E = []
+
+with open("md.log") as f:
+    for line in f:
+        if line.startswith("Time"):
+            continue
+        parts = line.split()
+        if len(parts) > 1:
+            chgnet_E.append(float(parts[1]))  # Etot[eV]
+
+chgnet_E = np.array(chgnet_E)
+
+# -----------------------------
+# MATCH LENGTH
+# -----------------------------
+n = min(len(aimd_E), len(chgnet_E))
+aimd_E = aimd_E[:n]
+chgnet_E = chgnet_E[:n]
+
+# -----------------------------
+# COMPUTE DELTA E
+# -----------------------------
+dE_aimd = np.diff(aimd_E)
+dE_chgnet = np.diff(chgnet_E)
+
+# -----------------------------
+# MAE
+# -----------------------------
+mae = np.mean(np.abs(dE_aimd - dE_chgnet))
+print(f"MAE of ΔE = {mae:.6f} eV")
+
+# -----------------------------
+# PLOT ΔE
+# -----------------------------
+plt.figure(figsize=(6,4))
+
+plt.plot(dE_aimd, label="AIMD ΔE")
+plt.plot(dE_chgnet, label="CHGNet ΔE")
+
+plt.xlabel("Step")
+plt.ylabel("ΔE (eV)")
+plt.title("Energy Difference Between Consecutive Steps")
+
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.savefig("deltaE_comparison.png", dpi=300)
+plt.show()
+
+# -----------------------------
+# PLOT ERROR
+# -----------------------------
+plt.figure(figsize=(6,4))
+
+error = np.abs(dE_aimd - dE_chgnet)
+
+plt.plot(error, label=f"|ΔE error| (MAE={mae:.4f})")
+
+plt.xlabel("Step")
+plt.ylabel("Error (eV)")
+plt.title("MAE of ΔE (AIMD vs CHGNet)")
+
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.savefig("deltaE_error.png", dpi=300)
+plt.show()
