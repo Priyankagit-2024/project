@@ -1,0 +1,81 @@
+from ase.io import read
+import numpy as np
+
+# -------- SETTINGS --------
+traj_file = "md.traj"
+cutoff_CuCu = 3.025
+cutoff_CuO  = 1.825
+z_cut = 5.912
+tol = 0.01
+
+# -------- LOAD LAST FRAME --------
+atoms = read(traj_file, index=-1)
+
+positions = atoms.get_positions()
+symbols = atoms.get_chemical_symbols()
+cell = atoms.get_cell()
+pbc = atoms.get_pbc()
+
+# -------- FUNCTION: distance with PBC --------
+def distance(i, j):
+    rij = positions[j] - positions[i]
+    rij -= np.round(rij @ np.linalg.inv(cell)) @ cell
+    return np.linalg.norm(rij)
+
+# -------- IDENTIFY ATOMS --------
+cu_indices = [i for i, s in enumerate(symbols) if s == "Cu"]
+o_indices  = [i for i, s in enumerate(symbols) if s == "O"]
+
+# -------- FILTER SURFACE Cu --------
+surface_cu_indices = []
+
+for i in cu_indices:
+    z = positions[i][2]
+    if z >= z_cut - tol:
+        surface_cu_indices.append(i)
+
+# -------- COMPUTE CN FOR SURFACE Cu --------
+cn_cucu = []
+cn_cuo  = []
+
+for i in surface_cu_indices:
+    count_cucu = 0
+    count_cuo = 0
+
+    # Cu–Cu
+    for j in cu_indices:
+        if i != j:
+            if distance(i, j) <= cutoff_CuCu:
+                count_cucu += 1
+
+    # Cu–O
+    for j in o_indices:
+        if distance(i, j) <= cutoff_CuO:
+            count_cuo += 1
+
+    cn_cucu.append(count_cucu)
+    cn_cuo.append(count_cuo)
+
+# -------- OUTPUT --------
+print("Surface Cu indices:", surface_cu_indices)
+
+print("\nCu–Cu CN (surface):", cn_cucu)
+print("Cu–O  CN (surface):", cn_cuo)
+
+print("\nAverage Cu–Cu CN (surface):", np.mean(cn_cucu))
+print("Average Cu–O  CN (surface):", np.mean(cn_cuo))
+
+# -------- SAVE --------
+with open("surface_coordination.txt", "w") as f:
+    f.write("Surface Cu Coordination (z ≥ {:.3f} Å)\n".format(z_cut))
+    f.write("Atom_ID   Z(Å)   Cu-Cu_CN   Cu-O_CN\n")
+
+    for idx, c1, c2 in zip(surface_cu_indices, cn_cucu, cn_cuo):
+        z = positions[idx][2]
+        f.write(f"{idx+1:5d}   {z:7.3f}   {c1:8d}   {c2:8d}\n")
+
+    f.write("\n")
+    f.write(f"Average Cu-Cu CN (surface): {np.mean(cn_cucu):.4f}\n")
+    f.write(f"Average Cu-O  CN (surface): {np.mean(cn_cuo):.4f}\n")
+
+print("\n✅ Saved to surface_coordination.txt")
