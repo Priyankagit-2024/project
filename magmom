@@ -1,0 +1,37 @@
+from ase.io import read
+from pymatgen.io.ase import AseAtomsAdaptor
+from chgnet.model import CHGNet
+import numpy as np
+
+# -----------------------------
+# Load model
+# -----------------------------
+model = CHGNet.load()
+
+# -----------------------------
+# Read trajectory
+# -----------------------------
+traj = read("md.traj", ":")
+
+magmom_avg = []
+
+# -----------------------------
+# Loop over frames
+# -----------------------------
+for atoms in traj:
+
+    structure = AseAtomsAdaptor.get_structure(atoms)
+
+    pred = model.predict_structure(structure)
+
+    magmom = pred["m"]
+
+    # average over all atoms (or select Cu if needed)
+    magmom_avg.append(np.mean(magmom))
+
+# -----------------------------
+# Save
+# -----------------------------
+np.savetxt("magmom_vs_time.dat", magmom_avg)
+
+print("✅ Saved magmom_vs_time.dat")
