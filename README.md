@@ -1,1 +1,1 @@
-# CHGNet-project
+# project
