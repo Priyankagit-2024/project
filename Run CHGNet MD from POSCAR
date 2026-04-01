@@ -1,0 +1,32 @@
+import json
+from pymatgen.core import Structure
+from pymatgen.io.ase import AseAtomsAdaptor
+from ase.io import read
+
+from chgnet.model import CHGNet
+from chgnet.model.dynamics import MolecularDynamics
+
+# -----------------------------
+# Read structure
+# -----------------------------
+atoms = read("POSCAR")
+
+# -----------------------------
+# Load CHGNet model
+# -----------------------------
+model = CHGNet.load()
+
+# -----------------------------
+# Run MD
+# -----------------------------
+md = MolecularDynamics(
+    atoms=atoms,
+    model=model,
+    ensemble="nvt",
+    temperature=300,
+    timestep=1,        # fs
+    trajectory="md.traj",
+    logfile="md.log",
+)
+
+md.run(1000000)
