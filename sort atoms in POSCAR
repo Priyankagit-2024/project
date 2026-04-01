@@ -1,0 +1,79 @@
+input_file = "POSCAR"
+output_file = "POSCAR_sorted_fixed"
+
+# How many Cu and O atoms (with lowest Z) to fix
+N_Cu = 36
+N_O = 9
+
+with open(input_file, "r") as f:
+    lines = f.readlines()
+
+# Find start of coordinates
+for i, line in enumerate(lines):
+    if "Direct" in line or "Cartesian" in line:
+        coord_type = line.strip()
+        start_index = i + 1
+        break
+
+# Extract species and counts
+species = lines[start_index - 3].split()
+atom_counts = list(map(int, lines[start_index - 2].split()))
+
+# Read all atomic positions
+atoms = []
+for line in lines[start_index:]:
+    if line.strip():
+        parts = line.split()
+        # Take x, y, z only (skip first column like '29' if present)
+        if len(parts) >= 4:
+            atom = parts[1:4]
+        else:
+            atom = parts[:3]
+        atoms.append(atom)
+
+# Split atoms into groups per element
+atoms_by_element = {}
+idx = 0
+for sp, count in zip(species, atom_counts):
+    atoms_by_element[sp] = atoms[idx:idx+count]
+    idx += count
+
+# Sort Cu and O by Z and apply fixing flags
+if "Cu" in atoms_by_element:
+    cu_atoms = atoms_by_element["Cu"]
+    cu_atoms_sorted = sorted(cu_atoms, key=lambda x: float(x[2]))
+    for i in range(len(cu_atoms_sorted)):
+        cu_atoms_sorted[i] += ['F', 'F', 'F'] if i < N_Cu else ['T', 'T', 'T']
+    atoms_by_element["Cu"] = cu_atoms_sorted
+
+if "O" in atoms_by_element:
+    o_atoms = atoms_by_element["O"]
+    o_atoms_sorted = sorted(o_atoms, key=lambda x: float(x[2]))
+    for i in range(len(o_atoms_sorted)):
+        o_atoms_sorted[i] += ['F', 'F', 'F'] if i < N_O else ['T', 'T', 'T']
+    atoms_by_element["O"] = o_atoms_sorted
+
+# Other species: keep movable
+for sp in atoms_by_element:
+    if sp not in ["Cu", "O"]:
+        for i in range(len(atoms_by_element[sp])):
+            atoms_by_element[sp][i] += ['T', 'T', 'T']
+
+# Reconstruct atom list in original species order
+all_atoms = []
+for sp in species:
+    all_atoms.extend(atoms_by_element[sp])
+
+# Insert "Selective dynamics" line if not present
+if "Selective dynamics" not in lines[start_index - 4]:
+    lines.insert(start_index, "Selective dynamics\n")
+    start_index += 1
+
+# Write new POSCAR
+with open(output_file, "w") as f:
+    f.writelines(lines[:start_index])
+    for atom in all_atoms:
+        f.write("  " + "  ".join(atom) + "\n")
+
+print(f"✅ Sorted & fixed POSCAR written to '{output_file}'")
+
