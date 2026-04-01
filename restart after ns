@@ -1,0 +1,26 @@
+from ase.io import read
+from chgnet.model import CHGNet
+from chgnet.model.dynamics import MolecularDynamics
+
+# load last frame
+atoms = read("md.traj", -1)
+
+# keep velocities
+vel = atoms.get_velocities()
+atoms.set_velocities(vel)
+
+# load model
+model = CHGNet.load()
+
+# restart MD
+md = MolecularDynamics(
+    atoms=atoms,
+    model=model,
+    ensemble="nvt",
+    temperature=300,
+    timestep=1,
+    trajectory="md_restart.traj",
+    logfile="md_restart.log",
+)
+
+md.run(1000000)
