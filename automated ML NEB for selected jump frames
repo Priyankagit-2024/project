@@ -1,0 +1,128 @@
+from ase.io import read
+from ase.mep import NEB
+from ase.optimize import BFGS
+from ase.constraints import FixAtoms
+import numpy as np
+
+from chgnet.model import CHGNet
+from chgnet.model.dynamics import CHGNetCalculator
+
+# =============================
+# INPUT (Chemcraft indices)
+# =============================
+initial_index_cc = 108
+final_index_cc   = 106
+
+# convert to ASE
+target_index = initial_index_cc - 1
+
+traj_file = "md.traj"
+jump_threshold = 0.5   # Å (detect diffusion jump)
+n_images = 7
+
+# =============================
+# LOAD TRAJECTORY
+# =============================
+traj = read(traj_file, ":")
+
+print("Total frames:", len(traj))
+
+# =============================
+# TRACK ATOM MOTION
+# =============================
+z_positions = []
+
+for atoms in traj:
+    z_positions.append(atoms.positions[target_index][2])
+
+# =============================
+# DETECT JUMP
+# =============================
+jump_frame = None
+
+for i in range(1, len(z_positions)):
+    dz = abs(z_positions[i] - z_positions[i-1])
+
+    if dz > jump_threshold:
+        jump_frame = i
+        print(f"🔥 Jump detected at frame: {i-1} → {i} (Δz = {dz:.3f} Å)")
+        break
+
+if jump_frame is None:
+    raise ValueError("❌ No diffusion jump detected")
+
+# =============================
+# EXTRACT LOCAL STRUCTURES
+# =============================
+initial = traj[jump_frame - 1]
+final   = traj[jump_frame]
+
+print("\nUsing frames:", jump_frame-1, "→", jump_frame)
+
+# =============================
+# CREATE NEB IMAGES
+# =============================
+images = [initial]
+
+for _ in range(n_images - 2):
+    images.append(initial.copy())
+
+images.append(final)
+
+# =============================
+# INTERPOLATE (BETTER PATH)
+# =============================
+neb = NEB(images)
+neb.interpolate(method='idpp')
+
+# =============================
+# FIX BOTTOM LAYERS
+# =============================
+z = initial.get_positions()[:, 2]
+z_min = np.min(z)
+z_fix = z_min + 2.0
+
+mask = [zi < z_fix for zi in z]
+
+constraint = FixAtoms(mask=mask)
+
+for img in images:
+    img.set_constraint(constraint)
+
+# =============================
+# ASSIGN CALCULATORS
+# =============================
+model = CHGNet.load()
+
+for img in images:
+    img.calc = CHGNetCalculator(model=model)
+
+# =============================
+# RUN NEB
+# =============================
+opt = BFGS(neb, trajectory="neb.traj", logfile="neb.log")
+opt.run(fmax=0.05)
+
+# =============================
+# ENERGY PROFILE
+# =============================
+energies = [img.get_potential_energy() for img in images]
+
+print("\n===== NEB RESULTS =====")
+for i, e in enumerate(energies):
+    print(f"Image {i}: {e:.6f} eV")
+
+barrier = max(energies) - energies[0]
+
+print(f"\n🔥 Diffusion barrier = {barrier:.4f} eV")
+
+# =============================
+# SAVE
+# =============================
+with open("neb_energies.txt", "w") as f:
+    f.write("Image   Energy (eV)\n")
+    for i, e in enumerate(energies):
+        f.write(f"{i:3d}   {e:.6f}\n")
+    f.write(f"\nBarrier = {barrier:.6f} eV\n")
+
+print("✅ Saved to neb_energies.txt")
