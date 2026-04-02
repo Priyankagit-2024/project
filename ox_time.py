@@ -15,7 +15,6 @@ tol = 0.01
 traj = read(traj_file, ":")
 
 time = []
-avg_z_surface = []
 count_surface = []
 
 # -----------------------------
@@ -26,7 +25,7 @@ for step, atoms in enumerate(traj):
     positions = atoms.get_positions()
     symbols = atoms.get_chemical_symbols()
 
-    surface_z = []
+    count = 0
 
     for i, sym in enumerate(symbols):
 
@@ -36,46 +35,59 @@ for step, atoms in enumerate(traj):
         z = positions[i][2]
 
         if z >= z_cut - tol:
-            surface_z.append(z)
+            count += 1
 
-    # store results
     time.append(step)
-
-    if len(surface_z) > 0:
-        avg_z_surface.append(np.mean(surface_z))
-    else:
-        avg_z_surface.append(0)
-
-    count_surface.append(len(surface_z))
+    count_surface.append(count)
 
 # -----------------------------
-# PLOT 1: Average Z vs Time
+# INITIAL & FINAL VALUES
+# -----------------------------
+count_initial = count_surface[0]
+count_final   = count_surface[-1]
+
+delta_count = count_final - count_initial
+
+# -----------------------------
+# PRINT TO SCREEN
+# -----------------------------
+print("\n====== Surface Oxygen Analysis ======")
+print(f"O atoms at i = 0      : {count_initial}")
+print(f"O atoms at i = 1 ns   : {count_final}")
+print(f"Change (ΔN)           : {delta_count}")
+
+# -----------------------------
+# SAVE TO FILE
+# -----------------------------
+with open("O_surface_change.txt", "w") as f:
+
+    f.write("Surface Oxygen Count Change Analysis\n")
+    f.write("====================================\n\n")
+
+    f.write(f"z cutoff = {z_cut} Å\n\n")
+
+    f.write(f"O atoms at i = 0      : {count_initial}\n")
+    f.write(f"O atoms at i = 1 ns   : {count_final}\n")
+    f.write(f"Change (ΔN)           : {delta_count}\n\n")
+
+    f.write("Full time evolution:\n")
+    f.write("Step    O_count\n")
+
+    for t, c in zip(time, count_surface):
+        f.write(f"{t:6d}   {c:5d}\n")
+
+print("\n✅ Output saved to O_surface_change.txt")
+
+# -----------------------------
+# OPTIONAL: Plot
 # -----------------------------
 plt.figure()
-
-plt.plot(time, avg_z_surface)
-
-plt.xlabel("Step")
-plt.ylabel("Average Z of surface O (Å)")
-plt.title("Surface Oxygen Height vs Time")
-
-plt.grid()
-plt.savefig("O_surface_z_vs_time.png", dpi=300)
-
-# -----------------------------
-# PLOT 2: Count vs Time
-# -----------------------------
-plt.figure()
-
 plt.plot(time, count_surface)
 
 plt.xlabel("Step")
-plt.ylabel("Number of O atoms (z ≥ 6.370 Å)")
+plt.ylabel("Number of O atoms (z ≥ {:.3f} Å)".format(z_cut))
 plt.title("Surface Oxygen Count vs Time")
 
 plt.grid()
 plt.savefig("O_surface_count_vs_time.png", dpi=300)
-
 plt.show()
-
-print("✅ Plots saved!")
