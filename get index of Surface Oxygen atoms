@@ -1,0 +1,57 @@
+from ase.io import read
+import numpy as np
+
+# -----------------------------
+# INPUT (PUT YOUR FINAL COORD HERE)
+# -----------------------------
+target_pos = np.array([9.434419471, 9.809918639, 7.843195300])   # 🔥 replace this
+tol = 0.2   # Å tolerance
+
+# -----------------------------
+# Load frames
+# -----------------------------
+initial = read("md.traj", index=0)
+final   = read("md.traj", index=-1)
+
+pos_i = initial.get_positions()
+pos_f = final.get_positions()
+
+sym_i = initial.get_chemical_symbols()
+sym_f = final.get_chemical_symbols()
+
+# -----------------------------
+# STEP 1: Find index in FINAL
+# -----------------------------
+final_index = None
+
+for i, (p, s) in enumerate(zip(pos_f, sym_f)):
+
+    if s != "O":
+        continue
+
+    dist = np.linalg.norm(p - target_pos)
+
+    if dist < tol:
+        final_index = i
+        break
+
+if final_index is None:
+    raise ValueError("❌ No matching O atom found in final frame")
+
+print("Final index:", final_index)
+print("Final position:", pos_f[final_index])
+
+# -----------------------------
+# STEP 2: Track SAME atom to INITIAL
+# -----------------------------
+# (same index corresponds to same atom in MD trajectory)
+initial_index = final_index
+
+print("\nInitial index:", initial_index)
+print("Initial position:", pos_i[initial_index])
+
+# -----------------------------
+# EXTRA: sanity check
+# -----------------------------
+disp = np.linalg.norm(pos_f[final_index] - pos_i[initial_index])
+print("\nDisplacement (Å):", round(disp, 3))
