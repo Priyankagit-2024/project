@@ -8,56 +8,62 @@ from chgnet.model import CHGNet
 from chgnet.model.dynamics import CHGNetCalculator
 
 # =============================
-# INPUT (Chemcraft indices)
+# INPUT (Chemcraft index)
 # =============================
-initial_index_cc = 108
-final_index_cc   = 106
-
-# convert to ASE
-target_index = initial_index_cc - 1
+initial_index_cc = 108   # from POSCAR
+target_index = initial_index_cc - 1  # ASE index
 
 traj_file = "md.traj"
-jump_threshold = 0.5   # Å (detect diffusion jump)
+
+# Detection parameters (tune if needed)
+window = 50
+threshold = 1.0   # Å total displacement
+
 n_images = 7
 
 # =============================
-# LOAD TRAJECTORY
+# LOAD TRAJECTORY (FAST ACCESS)
 # =============================
+print("Reading trajectory...")
 traj = read(traj_file, ":")
 
 print("Total frames:", len(traj))
 
 # =============================
-# TRACK ATOM MOTION
+# TRACK FULL DISPLACEMENT
 # =============================
-z_positions = []
+positions = [atoms.positions[target_index] for atoms in traj]
 
-for atoms in traj:
-    z_positions.append(atoms.positions[target_index][2])
+# Debug info
+z_vals = [p[2] for p in positions]
+print("Z range:", min(z_vals), "→", max(z_vals))
+print("Total Δz:", max(z_vals) - min(z_vals))
 
 # =============================
-# DETECT JUMP
+# DETECT DIFFUSION EVENT
 # =============================
 jump_frame = None
 
-for i in range(1, len(z_positions)):
-    dz = abs(z_positions[i] - z_positions[i-1])
+for i in range(len(positions) - window):
 
-    if dz > jump_threshold:
+    dr = np.linalg.norm(positions[i + window] - positions[i])
+
+    if dr > threshold:
         jump_frame = i
-        print(f"🔥 Jump detected at frame: {i-1} → {i} (Δz = {dz:.3f} Å)")
+        print(f"\n🔥 Diffusion detected between frames {i} → {i+window}")
+        print(f"Displacement = {dr:.3f} Å")
         break
 
 if jump_frame is None:
-    raise ValueError("❌ No diffusion jump detected")
+    raise ValueError("❌ No diffusion detected → increase window or reduce threshold")
 
 # =============================
-# EXTRACT LOCAL STRUCTURES
+# EXTRACT LOCAL FRAMES
 # =============================
-initial = traj[jump_frame - 1]
-final   = traj[jump_frame]
+initial = traj[jump_frame]
+final   = traj[jump_frame + window]
 
-print("\nUsing frames:", jump_frame-1, "→", jump_frame)
+print("\nUsing frames:", jump_frame, "→", jump_frame + window)
 
 # =============================
 # CREATE NEB IMAGES
@@ -70,13 +76,13 @@ for _ in range(n_images - 2):
 images.append(final)
 
 # =============================
-# INTERPOLATE (BETTER PATH)
+# INTERPOLATE PATH (BETTER)
 # =============================
 neb = NEB(images)
 neb.interpolate(method='idpp')
 
 # =============================
-# FIX BOTTOM LAYERS
+# FIX BOTTOM SLAB
 # =============================
 z = initial.get_positions()[:, 2]
 z_min = np.min(z)
@@ -92,6 +98,7 @@ for img in images:
 # =============================
 # ASSIGN CALCULATORS
 # =============================
+print("\nLoading CHGNet...")
 model = CHGNet.load()
 
 for img in images:
@@ -100,6 +107,7 @@ for img in images:
 # =============================
 # RUN NEB
 # =============================
+print("\nRunning NEB...")
 opt = BFGS(neb, trajectory="neb.traj", logfile="neb.log")
 opt.run(fmax=0.05)
 
@@ -117,7 +125,7 @@ barrier = max(energies) - energies[0]
 print(f"\n🔥 Diffusion barrier = {barrier:.4f} eV")
 
 # =============================
-# SAVE
+# SAVE RESULTS
 # =============================
 with open("neb_energies.txt", "w") as f:
     f.write("Image   Energy (eV)\n")
