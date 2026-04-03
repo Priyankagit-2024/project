@@ -1,0 +1,71 @@
+import re
+
+filename = "o.out"
+
+with open(filename, "r") as f:
+    lines = f.readlines()
+
+# Step 1: find last Mulliken block
+start = None
+for i in range(len(lines)-1, -1, -1):
+    if "Mulliken Population Analysis" in lines[i]:
+        start = i
+        break
+
+if start is None:
+    print("No Mulliken block found!")
+    exit()
+
+charges = []
+reading = False
+
+for line in lines[start:]:
+
+    if "#  Atom" in line:
+        reading = True
+        continue
+
+    if reading:
+        parts = line.split()
+
+        # stop when table ends
+        if len(parts) < 4:
+            break
+
+        # extract atom id safely
+        try:
+            atom_id = int(parts[0])
+        except:
+            continue
+
+        element = parts[1]
+
+        # ✅ SAFE float extraction (fixes your corrupted line issue)
+        match = re.search(r'(-?\d+\.\d+)$', line.strip())
+        if not match:
+            continue
+
+        net_charge = float(match.group(1))
+
+        if element == "Cu" and 91 <= atom_id <= 108:
+            charges.append(net_charge)
+
+# Output
+print("Charges:", charges)
+print("Count:", len(charges))
+
+if charges:
+    print("Average:", sum(charges)/len(charges))
+else:
+    print("No matching Cu atoms found!")
+output_file = "cu91_108_avg_charge.txt"
+
+with open(output_file, "w") as f:
+    f.write("Charges:\n")
+    for c in charges:
+        f.write(f"{c:.6f}\n")
+
+    f.write(f"\nCount: {len(charges)}\n")
+    f.write(f"Average Net Charge: {sum(charges)/len(charges):.6f}\n")
+
+print(f"Saved results to {output_file}")
