@@ -1,0 +1,46 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# Input file
+# -----------------------------
+log_file = "md.log"
+
+time = []
+etot = []
+
+# -----------------------------
+# Read file
+# -----------------------------
+with open(log_file) as f:
+    for line in f:
+        if line.startswith("Time"):
+            continue   # skip header
+
+        parts = line.split()
+
+        if len(parts) < 2:
+            continue
+
+        time.append(float(parts[0]))
+        etot.append(float(parts[1]))
+
+time = np.array(time)
+etot = np.array(etot)
+
+# -----------------------------
+# Plot
+# -----------------------------
+plt.figure()
+line_color = "blue"
+plt.plot(time, etot, linewidth=2,color=line_color)
+plt.xlim(0,1000)
+plt.xlabel("Time (ps)", fontsize=14, fontweight='bold')
+plt.ylabel("Energy (eV)", fontsize=14, fontweight='bold')
+plt.xticks(fontsize=12, fontweight='bold')
+plt.yticks(fontsize=12, fontweight='bold')
+
+plt.savefig("etot_vs_time.png", dpi=300)
+plt.show()
+
+print("✅ Plot saved as etot_vs_time.png")
