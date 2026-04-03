@@ -39,6 +39,7 @@ plt.xlabel("Time (ps)", fontsize=14, fontweight='bold')
 plt.ylabel("Energy (eV)", fontsize=14, fontweight='bold')
 plt.xticks(fontsize=12, fontweight='bold')
 plt.yticks(fontsize=12, fontweight='bold')
+plt.tight_layout()
 
 plt.savefig("etot_vs_time.png", dpi=300)
 plt.show()
