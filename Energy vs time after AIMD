@@ -35,8 +35,8 @@ while i < len(lines):
 plt.figure()
 
 # thinner line
-plt.plot(steps, energies, linewidth=2)
-
+line_color = "brown"
+plt.plot(steps, energies, linewidth=2,color=line_color)
 # Improve y-axis visibility
 plt.ylim(min(energies) - 0.10, max(energies) + 0.10)
 plt.xlim(0,15000)
