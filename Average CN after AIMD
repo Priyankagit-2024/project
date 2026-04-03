@@ -1,0 +1,75 @@
+import numpy as np
+
+filename = "cu-pos-1.xyz"
+
+# -------- SETTINGS --------
+natoms = 108
+cutoff_CuCu = 3.025
+cutoff_CuO  = 1.825
+
+# -------- READ LAST FRAME --------
+with open(filename, "r") as f:
+    lines = f.readlines()
+
+# each frame = natoms + 2 lines
+block_size = natoms + 2
+
+# last frame
+last_block = lines[-block_size:]
+
+# -------- PARSE --------
+symbols = []
+positions = []
+
+for line in last_block[2:]:  # skip header
+    parts = line.split()
+    symbols.append(parts[0])
+    positions.append([float(x) for x in parts[1:4]])
+
+positions = np.array(positions)
+
+# -------- DISTANCE FUNCTION --------
+def distance(i, j):
+    return np.linalg.norm(positions[i] - positions[j])
+
+# -------- GET INDICES --------
+cu_indices = [i for i, s in enumerate(symbols) if s == "Cu"]
+o_indices  = [i for i, s in enumerate(symbols) if s == "O"]
+
+# -------- COMPUTE CN --------
+cn_cucu = []
+cn_cuo  = []
+
+for i in cu_indices:
+    count_cucu = 0
+    count_cuo  = 0
+
+    for j in cu_indices:
+        if i != j and distance(i, j) <= cutoff_CuCu:
+            count_cucu += 1
+
+    for j in o_indices:
+        if distance(i, j) <= cutoff_CuO:
+            count_cuo += 1
+
+    cn_cucu.append(count_cucu)
+    cn_cuo.append(count_cuo)
+
+# -------- OUTPUT --------
+print("Cu–Cu CN:", cn_cucu)
+print("Cu–O  CN:", cn_cuo)
+
+print("\nAverage Cu–Cu CN:", np.mean(cn_cucu))
+print("Average Cu–O  CN:", np.mean(cn_cuo))
+
+# -------- SAVE --------
+with open("cn_last_frame.txt", "w") as f:
+    f.write("Atom_ID   Cu-Cu_CN   Cu-O_CN\n")
+    for idx, (c1, c2) in zip(cu_indices, zip(cn_cucu, cn_cuo)):
+        f.write(f"{idx+1:5d}   {c1:8d}   {c2:8d}\n")
+
+    f.write("\n")
+    f.write(f"Average Cu-Cu CN: {np.mean(cn_cucu):.4f}\n")
+    f.write(f"Average Cu-O  CN: {np.mean(cn_cuo):.4f}\n")
+
+print("\nSaved to cn_last_frame.txt")
