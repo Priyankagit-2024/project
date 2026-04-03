@@ -1,0 +1,54 @@
+from ase.io import read
+import numpy as np
+
+cutoff_CuCu = 3.025
+cutoff_CuO  = 1.825
+z_threshold = 6.408
+
+atoms0 = read("cu-pos-1.xyz", index=0)
+atomsL = read("cu-pos-1.xyz", index=-1)
+
+def compute_cn(atoms):
+
+    cu_surface = [i for i,a in enumerate(atoms)
+                  if a.symbol=="Cu" and a.position[2] >= z_threshold]
+
+    cu_indices = [i for i,a in enumerate(atoms) if a.symbol=="Cu"]
+    o_indices  = [i for i,a in enumerate(atoms) if a.symbol=="O"]
+
+    cn_cucu, cn_cuo = [], []
+
+    for i in cu_surface:
+        c1 = sum(1 for j in cu_indices
+                 if i!=j and atoms.get_distance(i,j,mic=True)<=cutoff_CuCu)
+
+        c2 = sum(1 for j in o_indices
+                 if atoms.get_distance(i,j,mic=True)<=cutoff_CuO)
+
+        cn_cucu.append(c1)
+        cn_cuo.append(c2)
+
+    return np.mean(cn_cucu), np.mean(cn_cuo)
+cn0_cucu, cn0_cuo = compute_cn(atoms0)
+cnL_cucu, cnL_cuo = compute_cn(atomsL)
+
+# -------- PRINT --------
+print("\n===== i = 0 =====")
+print(f"Average Cu–Cu CN: {cn0_cucu:.4f}")
+print(f"Average Cu–O  CN: {cn0_cuo:.4f}")
+
+print("\n===== 15 ps =====")
+print(f"Average Cu–Cu CN: {cnL_cucu:.4f}")
+print(f"Average Cu–O  CN: {cnL_cuo:.4f}")
+
+# -------- SAVE --------
+with open("cn_results.txt", "w") as f:
+    f.write("===== i = 0 =====\n")
+    f.write(f"Average Cu–Cu CN: {cn0_cucu:.4f}\n")
+    f.write(f"Average Cu–O  CN: {cn0_cuo:.4f}\n\n")
+
+    f.write("===== 15 ps =====\n")
+    f.write(f"Average Cu–Cu CN: {cnL_cucu:.4f}\n")
+    f.write(f"Average Cu–O  CN: {cnL_cuo:.4f}\n")
+
+print("\nSaved to cn_results.txt")
