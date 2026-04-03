@@ -1,0 +1,54 @@
+import re
+import matplotlib.pyplot as plt
+
+# Conversion factor
+HARTREE_TO_EV = 27.2114
+
+steps = []
+energies = []
+
+with open("cu-pos-1.xyz", "r") as f:
+    lines = f.readlines()
+
+i = 0
+while i < len(lines):
+    try:
+        natoms = int(lines[i].strip())
+        comment = lines[i+1]
+
+        step_match = re.search(r"i\s*=\s*(\d+)", comment)
+        energy_match = re.search(r"E\s*=\s*([-0-9.]+)", comment)
+
+        if step_match and energy_match:
+            steps.append(int(step_match.group(1)))
+            # Convert Hartree → eV
+            energies.append(float(energy_match.group(1)) * HARTREE_TO_EV)
+
+        i += natoms + 2
+
+    except:
+        break
+
+# -----------------------------
+# Plot
+# -----------------------------
+plt.figure()
+
+# thinner line
+plt.plot(steps, energies, linewidth=2)
+
+# Improve y-axis visibility
+plt.ylim(min(energies) - 0.10, max(energies) + 0.10)
+plt.xlim(0,15000)
+plt.grid(alpha=0.3)
+
+# Axis labels (bold + bigger)
+plt.xlabel("Time (fs)", fontsize=14, fontweight='bold')
+plt.ylabel("Energy (eV)", fontsize=14, fontweight='bold')
+
+# Tick labels (bold + bigger)
+plt.xticks(fontsize=12, fontweight='bold')
+plt.yticks(fontsize=12, fontweight='bold')
+
+plt.savefig("E_vs_time.png", dpi=300)
+plt.show()
