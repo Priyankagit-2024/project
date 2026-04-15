@@ -1,0 +1,69 @@
+from ase.io import read
+import numpy as np
+
+# -----------------------------
+# INPUT
+# -----------------------------
+cutoff_CuCu = 3.025
+cutoff_CuO  = 1.825
+
+# -----------------------------
+# Load structure
+# -----------------------------
+atoms = read("CONTCAR")
+
+positions = atoms.get_positions()
+symbols   = atoms.get_chemical_symbols()
+
+# -----------------------------
+# Compute coordination
+# -----------------------------
+results = []
+
+for i, sym_i in enumerate(symbols):
+
+    if sym_i != "Cu":
+        continue
+
+    cn_cu = 0
+    cn_o  = 0
+
+    for j, sym_j in enumerate(symbols):
+
+        if i == j:
+            continue
+
+        # periodic distance
+        dist = atoms.get_distance(i, j, mic=True)
+
+        # Cu–Cu
+        if sym_j == "Cu" and dist <= cutoff_CuCu:
+            cn_cu += 1
+
+        # Cu–O
+        if sym_j == "O" and dist <= cutoff_CuO:
+            cn_o += 1
+
+    results.append((i, cn_cu, cn_o))
+
+# -----------------------------
+# PRINT
+# -----------------------------
+print("Index   Cu-Cu CN   Cu-O CN")
+print("-----------------------------")
+
+for idx, cn_cu, cn_o in results:
+    print(f"{idx:5d}     {cn_cu:3d}        {cn_o:3d}")
+
+# -----------------------------
+# AVERAGES
+# -----------------------------
+avg_cu_cu = np.mean([r[1] for r in results])
+avg_cu_o  = np.mean([r[2] for r in results])
+
+print("\nAverage Cu-Cu CN =", round(avg_cu_cu, 3))
+print("Average Cu-O CN  =", round(avg_cu_o, 3))
+with open("coordination.txt", "w") as f:
+    f.write("Index   Cu-Cu   Cu-O\n")
+    for idx, cn_cu, cn_o in results:
+        f.write(f"{idx:5d}   {cn_cu:3d}   {cn_o:3d}\n")
