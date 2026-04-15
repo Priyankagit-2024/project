@@ -41,6 +41,7 @@ chgnet_E = chgnet_E[:n]
 
 # -----------------------------
 # COMPUTE DELTA E
+#Cartesian
 # -----------------------------
 dE_aimd = np.diff(aimd_E)
 dE_chgnet = np.diff(chgnet_E)
@@ -71,19 +72,32 @@ plt.show()
 
 # -----------------------------
 # PLOT ERROR
-# -----------------------------
-plt.figure(figsize=(6,4))
 
+# time in fs (assuming 1 fs timestep)
 error = np.abs(dE_aimd - dE_chgnet)
+time_fs = np.arange(len(error))  # assuming 1 fs timestep
+plt.plot(time_fs, error, linewidth=1.5)
 
-plt.plot(error, label=f"|ΔE error| (MAE={mae:.4f})")
+# X-axis
+plt.xlim(0, 15000)
+plt.xticks(np.arange(0, 15001, 2000), fontsize=12, fontweight='bold')
 
-plt.xlabel("Step")
-plt.ylabel("Error (eV)")
-plt.title("MAE of ΔE (AIMD vs CHGNet)")
+# Y-axis
+plt.yticks(fontsize=12, fontweight='bold')
 
-plt.legend()
+# Labels
+plt.xlabel("Time (fs)", fontsize=14, fontweight='bold')
+plt.ylabel("ΔE (eV)", fontsize=14, fontweight='bold')
+
+# Title
+plt.title("MAE of ΔE (AIMD vs CHGNet)", fontsize=16, fontweight='bold')
+
+# Legend (only MAE)
+plt.legend([f"MAE = {mae:.4f} eV"], fontsize=12)
+
+# Grid
 plt.grid(alpha=0.3)
 
-plt.savefig("deltaE_error.png", dpi=300)
+plt.tight_layout()
+plt.savefig("deltaE_error_final.png", dpi=300)
 plt.show()
