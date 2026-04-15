@@ -41,7 +41,6 @@ chgnet_E = chgnet_E[:n]
 
 # -----------------------------
 # COMPUTE DELTA E
-#Cartesian
 # -----------------------------
 dE_aimd = np.diff(aimd_E)
 dE_chgnet = np.diff(chgnet_E)
@@ -90,7 +89,7 @@ plt.xlabel("Time (fs)", fontsize=14, fontweight='bold')
 plt.ylabel("ΔE (eV)", fontsize=14, fontweight='bold')
 
 # Title
-plt.title("MAE of ΔE (AIMD vs CHGNet)", fontsize=16, fontweight='bold')
+#plt.title("MAE of ΔE (AIMD vs CHGNet)", fontsize=16, fontweight='bold')
 
 # Legend (only MAE)
 plt.legend([f"MAE = {mae:.4f} eV"],
