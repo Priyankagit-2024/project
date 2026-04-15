@@ -93,7 +93,7 @@ plt.ylabel("ΔE (eV)", fontsize=14, fontweight='bold')
 plt.title("MAE of ΔE (AIMD vs CHGNet)", fontsize=16, fontweight='bold')
 
 # Legend (only MAE)
-plt.legend([f"MAE = {mae:.4f} eV"], fontsize=12)
+plt.legend([f"MAE = {mae:.4f} eV"], fontsize=12, fontweight='bold')
 
 # Grid
 plt.grid(alpha=0.3)
