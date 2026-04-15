@@ -97,9 +97,10 @@ plt.plot(r_cc_full, g_cc_full, "--", label="Cu-Cu (full eq)")
 
 plt.plot(r_co_15, g_co_15, label="Cu-O (15 ps)")
 plt.plot(r_co_full, g_co_full, "--", label="Cu-O (full eq)")
-
-plt.xlabel("r (Å)")
-plt.ylabel("g(r)")
+plt.yticks(fontsize=12, fontweight='bold')
+plt.xticks(fontsize=12, fontweight='bold')
+plt.xlabel("r (Å)", fontsize=14, fontweight='bold')
+plt.ylabel("g(r)", fontsize=14, fontweight='bold')
 plt.legend()
 
 plt.savefig("rdf_final.png", dpi=300)
