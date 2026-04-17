@@ -1,0 +1,109 @@
+import numpy as np
+import glob
+from ase.io import read
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# LOAD TRAJECTORY (restart-safe)
+# -----------------------------
+traj_files = sorted(glob.glob("*.traj"))
+
+all_frames = []
+
+for i, file in enumerate(traj_files):
+    traj = read(file, ":")
+    print(f"{file}: {len(traj)} frames")
+
+    if i == 0:
+        all_frames.extend(traj)
+    else:
+        all_frames.extend(traj[1:])  # remove duplicate
+
+traj = all_frames
+print("Total frames:", len(traj))
+
+# -----------------------------
+# PARAMETERS
+# -----------------------------
+timestep_fs = 1.0
+timestep_ps = timestep_fs * 1e-3
+
+# -----------------------------
+# SELECT SURFACE ATOMS AT t = 0
+# -----------------------------
+atoms0 = traj[0]
+pos0 = atoms0.get_positions()
+symbols = atoms0.get_chemical_symbols()
+
+z = pos0[:, 2]
+z_max = np.max(z)
+
+surface_thickness = 2.0   # adjust if needed
+
+# Select atoms near top surface
+surface_indices = [i for i in range(len(z)) if z_max - z[i] < surface_thickness]
+
+# Separate Cu and O
+surface_Cu = [i for i in surface_indices if symbols[i] == "Cu"]
+surface_O  = [i for i in surface_indices if symbols[i] == "O"]
+
+print("Surface Cu (t=0):", len(surface_Cu))
+print("Surface O  (t=0):", len(surface_O))
+
+# -----------------------------
+# GET POSITIONS OVER TIME
+# -----------------------------
+pos_Cu = np.array([atoms.get_positions()[surface_Cu] for atoms in traj])
+pos_O  = np.array([atoms.get_positions()[surface_O]  for atoms in traj])
+
+# -----------------------------
+# MSD FUNCTION
+# -----------------------------
+def compute_msd(positions):
+
+    n_frames = len(positions)
+    msd = np.zeros(n_frames)
+
+    for dt in range(n_frames):
+        disp = positions[dt:] - positions[:n_frames - dt]
+        sq_disp = np.sum(disp**2, axis=2)
+        msd[dt] = np.mean(sq_disp)
+
+    return msd
+
+# -----------------------------
+# COMPUTE MSD
+# -----------------------------
+msd_Cu = compute_msd(pos_Cu)
+msd_O  = compute_msd(pos_O)
+
+# -----------------------------
+# TIME AXIS
+# -----------------------------
+time_ps = np.arange(len(msd_Cu)) * timestep_ps
+
+# -----------------------------
+# SAVE DATA
+# -----------------------------
+np.savetxt("msd_surface_Cu.dat", np.column_stack([time_ps, msd_Cu]))
+np.savetxt("msd_surface_O.dat",  np.column_stack([time_ps, msd_O]))
+
+# -----------------------------
+# PLOT
+# -----------------------------
+plt.figure(figsize=(6,4))
+
+plt.plot(time_ps, msd_Cu, label="Surface Cu (t=0)")
+plt.plot(time_ps, msd_O,  label="Surface O (t=0)")
+
+plt.xlabel("Time (ps)", fontsize=12, fontweight="bold")
+plt.ylabel("MSD ($\\AA^2$)", fontsize=12, fontweight="bold")
+plt.title("MSD of Surface Atoms", fontsize=12)
+
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.savefig("msd_surface.png", dpi=300)
+plt.show()
+
+print("✅ Surface MSD computed")
