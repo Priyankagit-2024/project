@@ -1,0 +1,141 @@
+import numpy as np
+import glob
+from ase.io import read
+
+# -----------------------------
+# FIND & MERGE TRAJECTORIES
+# -----------------------------
+traj_files = sorted(glob.glob("*.traj"))
+
+all_frames = []
+
+for i, file in enumerate(traj_files):
+    traj = read(file, ":")
+    print(f"{file}: {len(traj)} frames")
+
+    if i == 0:
+        all_frames.extend(traj)
+    else:
+        all_frames.extend(traj[1:])  # remove duplicate frame
+
+traj = all_frames[::10]   # sampling
+
+print("Total frames after merge:", len(traj))
+
+# -----------------------------
+# TIMESTEP
+# -----------------------------
+timestep_fs = 1.0 * 10
+timestep_ps = timestep_fs * 1e-3
+
+# -----------------------------
+# INITIAL STRUCTURE
+# -----------------------------
+atoms0 = traj[0]
+positions = atoms0.get_positions()
+symbols = atoms0.get_chemical_symbols()
+z = positions[:, 2]
+
+# -----------------------------
+# LAYER DETECTION
+# -----------------------------
+tolerance = 0.6
+
+layers = []
+unused = list(range(len(z)))
+
+while unused:
+    ref = unused[0]
+    layer = [i for i in unused if abs(z[i] - z[ref]) < tolerance]
+    layers.append(layer)
+    unused = [i for i in unused if i not in layer]
+
+layers = sorted(layers, key=lambda l: np.mean(z[l]), reverse=True)
+
+print(f"Detected {len(layers)} layers")
+
+# -----------------------------
+# SELECT FIRST 5 LAYERS
+# -----------------------------
+max_layers = 5
+selected_layers = layers[:max_layers]
+
+layer_groups = {}
+
+for idx, layer in enumerate(selected_layers):
+
+    cu_atoms = [i for i in layer if symbols[i] == "Cu"]
+    o_atoms  = [i for i in layer if symbols[i] == "O"]
+
+    if cu_atoms:
+        layer_groups[f"Layer_{idx}_Cu"] = cu_atoms
+
+    if o_atoms:
+        layer_groups[f"Layer_{idx}_O"] = o_atoms
+
+# all Cu
+all_Cu = [i for i, s in enumerate(symbols) if s == "Cu"]
+layer_groups["All_Cu"] = all_Cu
+
+# -----------------------------
+# DIFFUSION FUNCTION
+# -----------------------------
+def compute_diffusion(indices):
+
+    if len(indices) == 0:
+        return None
+
+    positions = np.array([atoms.get_positions()[indices] for atoms in traj])
+
+    r0 = positions[0]
+
+    msd = []
+    for r in positions:
+        dr = r - r0
+        msd.append(np.mean(np.sum(dr**2, axis=1)))
+
+    msd = np.array(msd)
+    time = np.arange(len(msd)) * timestep_ps
+
+    # remove ballistic regime
+    start = int(0.1 * len(time))
+
+    coeff = np.polyfit(time[start:], msd[start:], 1)
+    slope = coeff[0]
+
+    D_A2_ps = slope / 4.0
+    D_m2_s = D_A2_ps * 1e-8
+
+    return D_A2_ps, D_m2_s
+
+# -----------------------------
+# COMPUTE ALL LAYERS
+# -----------------------------
+results = {}
+
+for key, indices in layer_groups.items():
+    val = compute_diffusion(indices)
+    results[key] = val
+
+# -----------------------------
+# SAVE OUTPUT
+# -----------------------------
+with open("layer_diffusion_results.txt", "w") as f:
+
+    f.write("Layer-wise Diffusion (Restart-safe)\n")
+    f.write("-----------------------------------\n\n")
+
+    for key, val in results.items():
+
+        if val is None:
+            continue
+
+        D_A2_ps, D_m2_s = val
+
+        print(f"{key}: {D_m2_s:.6e} m^2/s")
+
+        f.write(f"{key}\n")
+        f.write(f"D (Å^2/ps) = {D_A2_ps:.6e}\n")
+        f.write(f"D (m^2/s)  = {D_m2_s:.6e}\n\n")
+
+print("\n✅ Saved to layer_diffusion_results.txt")
