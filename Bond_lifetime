@@ -1,0 +1,198 @@
+import numpy as np
+import glob
+from ase.io import read
+
+# -----------------------------
+# PARAMETERS
+# -----------------------------
+cutoff_CuO = 2.2
+cutoff_CuCu = 3.4
+
+max_lag = 5000 # ~5 ps window (adjust if needed)
+
+# -----------------------------
+# LOAD & MERGE TRAJECTORIES
+# -----------------------------
+traj_files = sorted(glob.glob("*.traj"))
+
+all_frames = []
+
+for i, file in enumerate(traj_files):
+    traj = read(file, ":")
+    print(f"{file}: {len(traj)} frames")
+
+    if i == 0:
+        all_frames.extend(traj)
+    else:
+        all_frames.extend(traj[1:])  # remove duplicate frame
+
+traj = all_frames  # ❗ NO SAMPLING
+
+print("Total frames:", len(traj))
+
+# -----------------------------
+# TIME STEP
+# -----------------------------
+timestep_fs = 1.0   # original MD timestep
+timestep_ps = timestep_fs * 1e-3
+
+# -----------------------------
+# SURFACE SELECTION
+# -----------------------------
+atoms0 = traj[0]
+pos0 = atoms0.get_positions()
+symbols = atoms0.get_chemical_symbols()
+
+z = pos0[:, 2]
+z_max = np.max(z)
+
+surface_thickness = 2.5  # Å
+
+surface_indices = [i for i in range(len(z)) if z_max - z[i] < surface_thickness]
+
+surface_Cu = [i for i in surface_indices if symbols[i] == "Cu"]
+surface_O  = [i for i in surface_indices if symbols[i] == "O"]
+
+print("Surface Cu:", len(surface_Cu))
+print("Surface O :", len(surface_O))
+
+# -----------------------------
+# PAIRS
+# -----------------------------
+CuO_pairs = [(i, j) for i in surface_Cu for j in surface_O]
+CuCu_pairs = [(i, j) for i in surface_Cu for j in surface_Cu if i < j]
+
+print("Cu-O pairs:", len(CuO_pairs))
+print("Cu-Cu pairs:", len(CuCu_pairs))
+
+# -----------------------------
+# BUILD BOND MATRIX
+# -----------------------------
+def build_matrix(pairs, cutoff):
+
+    mat = []
+
+    for atoms in traj:
+        pos = atoms.get_positions()
+
+        bonds = []
+        for i, j in pairs:
+            d = np.linalg.norm(pos[i] - pos[j])
+            bonds.append(1 if d < cutoff else 0)
+
+        mat.append(bonds)
+
+    return np.array(mat)
+
+bond_CuO = build_matrix(CuO_pairs, cutoff_CuO)
+bond_CuCu = build_matrix(CuCu_pairs, cutoff_CuCu)
+
+# -----------------------------
+# INTERMITTENT (LIMITED LAG)
+# -----------------------------
+def intermittent(mat, max_lag):
+
+    n = mat.shape[0]
+    C = []
+
+    for t in range(max_lag):
+
+        vals = []
+        for t0 in range(n - t):
+            vals.append(np.mean(mat[t0] * mat[t0 + t]))
+
+        C.append(np.mean(vals))
+
+    return np.array(C)
+
+# -----------------------------
+# CONTINUOUS (LIMITED LAG)
+# -----------------------------
+def continuous(mat, max_lag):
+
+    n = mat.shape[0]
+    C = []
+
+    for t in range(max_lag):
+
+        vals = []
+
+        for t0 in range(n - t):
+
+            segment = mat[t0:t0 + t + 1]
+
+            # fast survival check
+            if np.any(segment == 0):
+                survive = np.prod(segment, axis=0)
+            else:
+                survive = np.ones(segment.shape[1])
+
+            vals.append(np.mean(mat[t0] * survive))
+
+        C.append(np.mean(vals))
+
+    return np.array(C)
+
+# -----------------------------
+# COMPUTE
+# -----------------------------
+print("\nComputing Cu-O...")
+Ci_CuO = intermittent(bond_CuO, max_lag)
+Cc_CuO = continuous(bond_CuO, max_lag)
+
+print("Computing Cu-Cu...")
+Ci_CuCu = intermittent(bond_CuCu, max_lag)
+Cc_CuCu = continuous(bond_CuCu, max_lag)
+
+# -----------------------------
+# TIME AXIS
+# -----------------------------
+time_ps = np.arange(max_lag) * timestep_ps
+
+# -----------------------------
+# LIFETIME (1/e)
+# -----------------------------
+def lifetime(C):
+
+    for i in range(len(C)):
+        if C[i] < 1 / np.e:
+            return time_ps[i]
+
+    return None
+
+tau_i_CuO = lifetime(Ci_CuO)
+tau_c_CuO = lifetime(Cc_CuO)
+
+tau_i_CuCu = lifetime(Ci_CuCu)
+tau_c_CuCu = lifetime(Cc_CuCu)
+
+# -----------------------------
+# OUTPUT
+# -----------------------------
+print("\n===== RESULTS =====")
+print(f"Cu-O intermittent: {tau_i_CuO:.4f} ps")
+print(f"Cu-O continuous  : {tau_c_CuO:.4f} ps")
+
+print(f"Cu-Cu intermittent: {tau_i_CuCu:.4f} ps")
+print(f"Cu-Cu continuous  : {tau_c_CuCu:.4f} ps")
+
+# -----------------------------
+# SAVE
+# -----------------------------
+np.savetxt("Ci_CuO.dat", np.column_stack([time_ps, Ci_CuO]))
+np.savetxt("Cc_CuO.dat", np.column_stack([time_ps, Cc_CuO]))
+
+np.savetxt("Ci_CuCu.dat", np.column_stack([time_ps, Ci_CuCu]))
+np.savetxt("Cc_CuCu.dat", np.column_stack([time_ps, Cc_CuCu]))
+
+with open("bond_lifetime_surface.txt", "w") as f:
+    f.write("Surface Bond Lifetime (Full Trajectory)\n")
+    f.write("--------------------------------------\n\n")
+
+    f.write(f"Cu-O intermittent: {tau_i_CuO} ps\n")
+    f.write(f"Cu-O continuous  : {tau_c_CuO} ps\n\n")
+
+    f.write(f"Cu-Cu intermittent: {tau_i_CuCu} ps\n")
+    f.write(f"Cu-Cu continuous  : {tau_c_CuCu} ps\n")
+
+print("\n✅ Done (Full traj + limited lag)")
