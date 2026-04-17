@@ -1,0 +1,93 @@
+import numpy as np
+
+# -----------------------------
+# INTERPOLATED FWHM FUNCTION
+# -----------------------------
+def compute_fwhm_interp(r, g):
+
+    peak_idx = np.argmax(g)
+    peak_r = r[peak_idx]
+    peak_val = g[peak_idx]
+
+    half_max = peak_val / 2.0
+
+    # ---------------- LEFT SIDE ---------------- #
+    r1 = None
+    for i in range(peak_idx, 0, -1):
+        if g[i] < half_max:
+            # linear interpolation
+            r1 = np.interp(
+                half_max,
+                [g[i], g[i+1]],
+                [r[i], r[i+1]]
+            )
+            break
+
+    # ---------------- RIGHT SIDE ---------------- #
+    r2 = None
+    for i in range(peak_idx, len(g)-1):
+        if g[i] < half_max:
+            r2 = np.interp(
+                half_max,
+                [g[i-1], g[i]],
+                [r[i-1], r[i]]
+            )
+            break
+
+    # Safety check
+    if r1 is None or r2 is None:
+        return peak_r, peak_val, None
+
+    fwhm = r2 - r1
+
+    return peak_r, peak_val, fwhm
+
+
+# -----------------------------
+# LOAD + ANALYZE FUNCTION
+# -----------------------------
+def analyze(file):
+
+    data = np.loadtxt(file)
+    r = data[:, 0]
+    g = data[:, 1]
+
+    peak_r, peak_val, fwhm = compute_fwhm_interp(r, g)
+
+    return peak_r, peak_val, fwhm
+
+
+# -----------------------------
+# FILE LIST
+# -----------------------------
+files = [
+    ("Cu-Cu 0ns", "rdf_Cu-Cu_0ns.dat"),
+    ("Cu-Cu 1ns", "rdf_Cu-Cu_1ns.dat"),
+    ("Cu-O 0ns", "rdf_Cu-O_0ns.dat"),
+    ("Cu-O 1ns", "rdf_Cu-O_1ns.dat"),
+    ("O-O 0ns", "rdf_O-O_0ns.dat"),
+    ("O-O 1ns", "rdf_O-O_1ns.dat"),
+]
+
+
+# -----------------------------
+# RUN ANALYSIS
+# -----------------------------
+with open("rdf_fwhm_results.txt", "w") as fout:
+
+    for label, file in files:
+
+        peak_r, peak_val, fwhm = analyze(file)
+
+        print(label)
+        print(f"  Peak position = {peak_r:.3f} Å")
+        print(f"  Peak height   = {peak_val:.3f}")
+        print(f"  FWHM          = {fwhm:.4f} Å\n")
+
+        fout.write(f"{label}\n")
+        fout.write(f"  Peak position = {peak_r:.3f} Å\n")
+        fout.write(f"  Peak height   = {peak_val:.3f}\n")
+        fout.write(f"  FWHM          = {fwhm:.4f} Å\n\n")
+
+
+print("✅ FWHM (interpolated) computed and saved to rdf_fwhm_results.txt")
