@@ -20,7 +20,9 @@ cell = atoms0.get_cell()
 volume = atoms0.get_volume()
 
 # ---------------- READ TRAJECTORY ---------------- #
-traj = read(traj_file, f"::{stride}")
+#traj = read(traj_file, f"::{stride}")
+traj = read(traj_file, "::{}".format(stride))
+
 
 for atoms in traj:
     atoms.set_cell(cell)
