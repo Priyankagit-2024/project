@@ -3,20 +3,26 @@ import glob
 from ase.io import read
 
 # -----------------------------
-# PARAMETERS
+# PARAMETERS (TUNABLE)
 # -----------------------------
 cutoff_CuO = 2.2
-cutoff_CuCu = 3.4
+cutoff_CuCu = 3.1   # from RDF (fixed)
 
-max_lag = 5000 # ~5 ps window (adjust if needed)
+sampling_step = 10          # trajectory sampling
+use_last_n_frames = 20000   # equilibrated region
+max_lag = 300               # 3 ps window
+origin_step = 10            # skip time origins (speedup)
+
+timestep_fs = 1.0
+timestep_ps = timestep_fs * 1e-3
 
 # -----------------------------
-# LOAD & MERGE TRAJECTORIES
+# LOAD TRAJECTORIES (restart-safe)
 # -----------------------------
 traj_files = sorted(glob.glob("*.traj"))
+print("Trajectory files:", traj_files)
 
 all_frames = []
-
 for i, file in enumerate(traj_files):
     traj = read(file, ":")
     print(f"{file}: {len(traj)} frames")
@@ -24,17 +30,15 @@ for i, file in enumerate(traj_files):
     if i == 0:
         all_frames.extend(traj)
     else:
-        all_frames.extend(traj[1:])  # remove duplicate frame
+        all_frames.extend(traj[1:])  # remove duplicate
 
-traj = all_frames  # ❗ NO SAMPLING
+# keep only equilibrated tail
+all_frames = all_frames[-use_last_n_frames:]
 
-print("Total frames:", len(traj))
+# apply sampling
+traj = all_frames[::sampling_step]
 
-# -----------------------------
-# TIME STEP
-# -----------------------------
-timestep_fs = 1.0   # original MD timestep
-timestep_ps = timestep_fs * 1e-3
+print("Frames used:", len(traj))
 
 # -----------------------------
 # SURFACE SELECTION
@@ -46,7 +50,7 @@ symbols = atoms0.get_chemical_symbols()
 z = pos0[:, 2]
 z_max = np.max(z)
 
-surface_thickness = 2.5  # Å
+surface_thickness = 2.5
 
 surface_indices = [i for i in range(len(z)) if z_max - z[i] < surface_thickness]
 
@@ -66,72 +70,77 @@ print("Cu-O pairs:", len(CuO_pairs))
 print("Cu-Cu pairs:", len(CuCu_pairs))
 
 # -----------------------------
-# BUILD BOND MATRIX
+# BUILD BOND MATRIX (FAST)
 # -----------------------------
 def build_matrix(pairs, cutoff):
 
-    mat = []
+    mat = np.zeros((len(traj), len(pairs)), dtype=np.int8)
 
-    for atoms in traj:
+    for t, atoms in enumerate(traj):
+
+        if t % 200 == 0:
+            print(f"Building matrix: frame {t}/{len(traj)}")
+
         pos = atoms.get_positions()
 
-        bonds = []
-        for i, j in pairs:
+        for p, (i, j) in enumerate(pairs):
             d = np.linalg.norm(pos[i] - pos[j])
-            bonds.append(1 if d < cutoff else 0)
+            mat[t, p] = 1 if d < cutoff else 0
 
-        mat.append(bonds)
-
-    return np.array(mat)
+    return mat
 
 bond_CuO = build_matrix(CuO_pairs, cutoff_CuO)
 bond_CuCu = build_matrix(CuCu_pairs, cutoff_CuCu)
 
 # -----------------------------
-# INTERMITTENT (LIMITED LAG)
+# INTERMITTENT (FAST VERSION)
 # -----------------------------
 def intermittent(mat, max_lag):
 
     n = mat.shape[0]
-    C = []
+    C = np.zeros(max_lag)
 
     for t in range(max_lag):
 
+        if t % 50 == 0:
+            print(f"Intermittent lag: {t}/{max_lag}")
+
         vals = []
-        for t0 in range(n - t):
+
+        for t0 in range(0, n - t, origin_step):
             vals.append(np.mean(mat[t0] * mat[t0 + t]))
 
-        C.append(np.mean(vals))
+        C[t] = np.mean(vals)
 
-    return np.array(C)
+    return C
 
 # -----------------------------
-# CONTINUOUS (LIMITED LAG)
+# CONTINUOUS (FAST VERSION)
 # -----------------------------
 def continuous(mat, max_lag):
 
     n = mat.shape[0]
-    C = []
+    C = np.zeros(max_lag)
 
     for t in range(max_lag):
 
+        if t % 50 == 0:
+            print(f"Continuous lag: {t}/{max_lag}")
+
         vals = []
 
-        for t0 in range(n - t):
+        for t0 in range(0, n - t, origin_step):
 
             segment = mat[t0:t0 + t + 1]
 
-            # fast survival check
-            if np.any(segment == 0):
-                survive = np.prod(segment, axis=0)
-            else:
-                survive = np.ones(segment.shape[1])
+            # faster survival check
+            survive = np.all(segment == 1, axis=0)
 
             vals.append(np.mean(mat[t0] * survive))
 
-        C.append(np.mean(vals))
+        C[t] = np.mean(vals)
 
-    return np.array(C)
+    return C
 
 # -----------------------------
 # COMPUTE
@@ -140,14 +149,14 @@ print("\nComputing Cu-O...")
 Ci_CuO = intermittent(bond_CuO, max_lag)
 Cc_CuO = continuous(bond_CuO, max_lag)
 
-print("Computing Cu-Cu...")
+print("\nComputing Cu-Cu...")
 Ci_CuCu = intermittent(bond_CuCu, max_lag)
 Cc_CuCu = continuous(bond_CuCu, max_lag)
 
 # -----------------------------
 # TIME AXIS
 # -----------------------------
-time_ps = np.arange(max_lag) * timestep_ps
+time_ps = np.arange(max_lag) * timestep_ps * sampling_step
 
 # -----------------------------
 # LIFETIME (1/e)
@@ -170,6 +179,7 @@ tau_c_CuCu = lifetime(Cc_CuCu)
 # OUTPUT
 # -----------------------------
 print("\n===== RESULTS =====")
+
 print(f"Cu-O intermittent: {tau_i_CuO:.4f} ps")
 print(f"Cu-O continuous  : {tau_c_CuO:.4f} ps")
 
@@ -186,8 +196,8 @@ np.savetxt("Ci_CuCu.dat", np.column_stack([time_ps, Ci_CuCu]))
 np.savetxt("Cc_CuCu.dat", np.column_stack([time_ps, Cc_CuCu]))
 
 with open("bond_lifetime_surface.txt", "w") as f:
-    f.write("Surface Bond Lifetime (Full Trajectory)\n")
-    f.write("--------------------------------------\n\n")
+    f.write("Surface Bond Lifetime (Optimized)\n")
+    f.write("---------------------------------\n\n")
 
     f.write(f"Cu-O intermittent: {tau_i_CuO} ps\n")
     f.write(f"Cu-O continuous  : {tau_c_CuO} ps\n\n")
@@ -195,4 +205,4 @@ with open("bond_lifetime_surface.txt", "w") as f:
     f.write(f"Cu-Cu intermittent: {tau_i_CuCu} ps\n")
     f.write(f"Cu-Cu continuous  : {tau_c_CuCu} ps\n")
 
-print("\n✅ Done (Full traj + limited lag)")
+print("\n✅ DONE (fast + stable)")
