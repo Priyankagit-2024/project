@@ -1,0 +1,129 @@
+import numpy as np
+import glob
+from ase.io import read
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# LOAD TRAJECTORY (restart-safe)
+# -----------------------------
+traj_files = sorted(glob.glob("*.traj"))
+
+all_frames = []
+for i, file in enumerate(traj_files):
+    traj = read(file, ":")
+    print("{}: {} frames".format(file, len(traj)))
+
+    if i == 0:
+        all_frames.extend(traj)
+    else:
+        all_frames.extend(traj[1:])  # remove duplicate
+
+print("Total frames:", len(all_frames))
+
+# -----------------------------
+# PARAMETERS
+# -----------------------------
+timestep_fs = 1.0
+timestep_ps = timestep_fs * 1e-3
+
+sampling_step = 10     # keep same
+max_time_ps = 600      # 🔥 now 600 ps
+
+# -----------------------------
+# SELECT FIRST 600 ps
+# -----------------------------
+n_frames_600ps = int(max_time_ps / timestep_ps)
+
+traj = all_frames[:n_frames_600ps:sampling_step]
+
+print("Frames used (after sampling):", len(traj))
+
+# -----------------------------
+# SELECT SURFACE ATOMS (t = 0)
+# -----------------------------
+atoms0 = traj[0]
+pos0 = atoms0.get_positions()
+symbols = atoms0.get_chemical_symbols()
+
+z = pos0[:, 2]
+z_max = np.max(z)
+
+surface_thickness = 2.0   # same as before
+
+surface_indices = [i for i in range(len(z)) if z_max - z[i] < surface_thickness]
+
+surface_Cu = [i for i in surface_indices if symbols[i] == "Cu"]
+surface_O  = [i for i in surface_indices if symbols[i] == "O"]
+
+print("Surface Cu:", len(surface_Cu))
+print("Surface O :", len(surface_O))
+
+# -----------------------------
+# GET POSITIONS
+# -----------------------------
+pos_Cu = np.array([atoms.get_positions()[surface_Cu] for atoms in traj])
+pos_O  = np.array([atoms.get_positions()[surface_O]  for atoms in traj])
+
+# -----------------------------
+# MSD FUNCTION (SAFE)
+# -----------------------------
+def compute_msd(positions, max_lag):
+
+    n_frames = len(positions)
+
+    # safety: do not exceed available frames
+    max_lag = min(max_lag, n_frames - 1)
+
+    msd = np.zeros(max_lag)
+
+    for dt in range(max_lag):
+
+        if dt % 200 == 0:
+            print("MSD lag: {}/{}".format(dt, max_lag))
+
+        disp = positions[dt:] - positions[:n_frames - dt]
+        sq_disp = np.sum(disp**2, axis=2)
+        msd[dt] = np.mean(sq_disp)
+
+    return msd
+
+# -----------------------------
+# COMPUTE MSD
+# -----------------------------
+max_lag = 3000   # 🔥 KEEP THIS (30 ps window)
+
+print("\nComputing MSD...")
+
+msd_Cu = compute_msd(pos_Cu, max_lag)
+msd_O  = compute_msd(pos_O,  max_lag)
+
+# -----------------------------
+# TIME AXIS
+# -----------------------------
+time_ps = np.arange(len(msd_Cu)) * timestep_ps * sampling_step
+
+# -----------------------------
+# SAVE DATA
+# -----------------------------
+np.savetxt("msd_surface_Cu_600ps.dat", np.column_stack([time_ps, msd_Cu]))
+np.savetxt("msd_surface_O_600ps.dat",  np.column_stack([time_ps, msd_O]))
+
+# -----------------------------
+# PLOT
+# -----------------------------
+plt.figure(figsize=(6,4))
+
+plt.plot(time_ps, msd_Cu, label="Surface Cu")
+plt.plot(time_ps, msd_O,  label="Surface O")
+
+plt.xlabel("Time (ps)", fontsize=12, fontweight="bold")
+plt.ylabel("MSD ($\\AA^2$)", fontsize=12, fontweight="bold")
+plt.title("MSD (600 ps trajectory, 30 ps window)", fontsize=12)
+
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.savefig("msd_surface_600ps.png", dpi=300)
+# plt.show()
+
+print("\n✅ MSD (600 ps trajectory) computed successfully")
