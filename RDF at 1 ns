@@ -21,8 +21,8 @@ volume = atoms0.get_volume()
 
 # ---------------- READ TRAJECTORY ---------------- #
 #traj = read(traj_file, f"::{stride}")
+#traj = read(traj_file, "::{}".format(stride))
 traj = read(traj_file, "::{}".format(stride))
-
 
 for atoms in traj:
     atoms.set_cell(cell)
@@ -106,7 +106,7 @@ plt.legend()
 plt.grid(alpha=0.3)
 
 plt.savefig("rdf_1ns.png", dpi=300)
-plt.show()
+#plt.show()
 
 # ---------------- FIND PEAKS ---------------- #
 def find_peaks(r, g):
