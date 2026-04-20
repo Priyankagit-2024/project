@@ -3,21 +3,22 @@ import glob
 from ase.io import read
 
 # -----------------------------
-# PARAMETERS (TUNABLE)
+# PARAMETERS
 # -----------------------------
 cutoff_CuO = 2.2
-cutoff_CuCu = 3.1   # from RDF (fixed)
+cutoff_CuCu = 3.2
 
-sampling_step = 10          # trajectory sampling
-use_last_n_frames = 20000   # equilibrated region
-max_lag = 300               # 3 ps window
-origin_step = 10            # skip time origins (speedup)
+sampling_step = 10
+use_last_n_frames = 50000
+
+max_lag = 2000
+origin_step = 10
 
 timestep_fs = 1.0
 timestep_ps = timestep_fs * 1e-3
 
 # -----------------------------
-# LOAD TRAJECTORIES (restart-safe)
+# LOAD TRAJECTORY (restart-safe)
 # -----------------------------
 traj_files = sorted(glob.glob("*.traj"))
 print("Trajectory files:", traj_files)
@@ -32,27 +33,43 @@ for i, file in enumerate(traj_files):
     else:
         all_frames.extend(traj[1:])  # remove duplicate
 
-# keep only equilibrated tail
+# take equilibrated part
 all_frames = all_frames[-use_last_n_frames:]
 
 # apply sampling
 traj = all_frames[::sampling_step]
-
 print("Frames used:", len(traj))
 
 # -----------------------------
-# SURFACE SELECTION
+# ROBUST SURFACE DETECTION
 # -----------------------------
 atoms0 = traj[0]
 pos0 = atoms0.get_positions()
 symbols = atoms0.get_chemical_symbols()
 
 z = pos0[:, 2]
-z_max = np.max(z)
 
-surface_thickness = 2.5
+# sort atoms by z (top → bottom)
+sorted_idx = np.argsort(-z)
 
-surface_indices = [i for i in range(len(z)) if z_max - z[i] < surface_thickness]
+layers = []
+current_layer = [sorted_idx[0]]
+
+z_tol = 0.6  # plane tolerance
+
+for idx in sorted_idx[1:]:
+    if abs(z[idx] - z[current_layer[0]]) < z_tol:
+        current_layer.append(idx)
+    else:
+        layers.append(current_layer)
+        current_layer = [idx]
+
+layers.append(current_layer)
+
+# 🔥 KEY: take first 3 layers (works for all terminations)
+surface_layers = layers[:3]
+
+surface_indices = [i for layer in surface_layers for i in layer]
 
 surface_Cu = [i for i in surface_indices if symbols[i] == "Cu"]
 surface_O  = [i for i in surface_indices if symbols[i] == "O"]
@@ -70,14 +87,13 @@ print("Cu-O pairs:", len(CuO_pairs))
 print("Cu-Cu pairs:", len(CuCu_pairs))
 
 # -----------------------------
-# BUILD BOND MATRIX (FAST)
+# BUILD BOND MATRIX
 # -----------------------------
 def build_matrix(pairs, cutoff):
 
     mat = np.zeros((len(traj), len(pairs)), dtype=np.int8)
 
     for t, atoms in enumerate(traj):
-
         if t % 200 == 0:
             print(f"Building matrix: frame {t}/{len(traj)}")
 
@@ -93,7 +109,7 @@ bond_CuO = build_matrix(CuO_pairs, cutoff_CuO)
 bond_CuCu = build_matrix(CuCu_pairs, cutoff_CuCu)
 
 # -----------------------------
-# INTERMITTENT (FAST VERSION)
+# INTERMITTENT (NORMALIZED)
 # -----------------------------
 def intermittent(mat, max_lag):
 
@@ -108,14 +124,24 @@ def intermittent(mat, max_lag):
         vals = []
 
         for t0 in range(0, n - t, origin_step):
-            vals.append(np.mean(mat[t0] * mat[t0 + t]))
 
-        C[t] = np.mean(vals)
+            h0 = mat[t0]
+            ht = mat[t0 + t]
+
+            mean_h0 = np.mean(h0)
+
+            if mean_h0 > 0:
+                vals.append(np.mean(h0 * ht) / mean_h0)
+
+        if len(vals) > 0:
+            C[t] = np.mean(vals)
+        else:
+            C[t] = np.nan
 
     return C
 
 # -----------------------------
-# CONTINUOUS (FAST VERSION)
+# CONTINUOUS (NORMALIZED)
 # -----------------------------
 def continuous(mat, max_lag):
 
@@ -131,14 +157,21 @@ def continuous(mat, max_lag):
 
         for t0 in range(0, n - t, origin_step):
 
-            segment = mat[t0:t0 + t + 1]
+            h0 = mat[t0]
+            mean_h0 = np.mean(h0)
 
-            # faster survival check
+            if mean_h0 == 0:
+                continue
+
+            segment = mat[t0:t0 + t + 1]
             survive = np.all(segment == 1, axis=0)
 
-            vals.append(np.mean(mat[t0] * survive))
+            vals.append(np.mean(h0 * survive) / mean_h0)
 
-        C[t] = np.mean(vals)
+        if len(vals) > 0:
+            C[t] = np.mean(vals)
+        else:
+            C[t] = np.nan
 
     return C
 
@@ -159,14 +192,12 @@ Cc_CuCu = continuous(bond_CuCu, max_lag)
 time_ps = np.arange(max_lag) * timestep_ps * sampling_step
 
 # -----------------------------
-# LIFETIME (1/e)
+# LIFETIME
 # -----------------------------
 def lifetime(C):
-
     for i in range(len(C)):
-        if C[i] < 1 / np.e:
+        if not np.isnan(C[i]) and C[i] < 1 / np.e:
             return time_ps[i]
-
     return None
 
 tau_i_CuO = lifetime(Ci_CuO)
@@ -176,15 +207,21 @@ tau_i_CuCu = lifetime(Ci_CuCu)
 tau_c_CuCu = lifetime(Cc_CuCu)
 
 # -----------------------------
-# OUTPUT
+# SAFE PRINT
 # -----------------------------
+def safe_print(label, val):
+    if val is None:
+        print(f"{label}: Not defined")
+    else:
+        print(f"{label}: {val:.4f} ps")
+
 print("\n===== RESULTS =====")
 
-print(f"Cu-O intermittent: {tau_i_CuO:.4f} ps")
-print(f"Cu-O continuous  : {tau_c_CuO:.4f} ps")
+safe_print("Cu-O intermittent", tau_i_CuO)
+safe_print("Cu-O continuous", tau_c_CuO)
 
-print(f"Cu-Cu intermittent: {tau_i_CuCu:.4f} ps")
-print(f"Cu-Cu continuous  : {tau_c_CuCu:.4f} ps")
+safe_print("Cu-Cu intermittent", tau_i_CuCu)
+safe_print("Cu-Cu continuous", tau_c_CuCu)
 
 # -----------------------------
 # SAVE
@@ -195,14 +232,4 @@ np.savetxt("Cc_CuO.dat", np.column_stack([time_ps, Cc_CuO]))
 np.savetxt("Ci_CuCu.dat", np.column_stack([time_ps, Ci_CuCu]))
 np.savetxt("Cc_CuCu.dat", np.column_stack([time_ps, Cc_CuCu]))
 
-with open("bond_lifetime_surface.txt", "w") as f:
-    f.write("Surface Bond Lifetime (Optimized)\n")
-    f.write("---------------------------------\n\n")
-
-    f.write(f"Cu-O intermittent: {tau_i_CuO} ps\n")
-    f.write(f"Cu-O continuous  : {tau_c_CuO} ps\n\n")
-
-    f.write(f"Cu-Cu intermittent: {tau_i_CuCu} ps\n")
-    f.write(f"Cu-Cu continuous  : {tau_c_CuCu} ps\n")
-
-print("\n✅ DONE (fast + stable)")
+print("\n✅ DONE (robust + termination independent)")
