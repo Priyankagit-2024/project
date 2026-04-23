@@ -1,0 +1,204 @@
+import numpy as np
+from ase.io import read, write
+
+# -----------------------------
+# PARAMETERS
+# -----------------------------
+traj_file = "md.traj"
+
+cutoff_CuO = 2.2
+sampling_step = 10
+use_last_n_frames = 50000
+
+timestep_fs = 1.0
+timestep_ps = timestep_fs * 1e-3
+
+# -----------------------------
+# LOAD FULL TRAJECTORY
+# -----------------------------
+print("Loading trajectory...")
+full_traj = read(traj_file, ":")
+
+N_total = len(full_traj)
+print("Total frames:", N_total)
+
+# -----------------------------
+# SELECT LAST PART + SAMPLING
+# -----------------------------
+start = N_total - use_last_n_frames
+traj = full_traj[start::sampling_step]
+
+print("Frames used (sampled):", len(traj))
+
+# -----------------------------
+# SURFACE SELECTION
+# -----------------------------
+atoms0 = traj[0]
+pos0 = atoms0.get_positions()
+symbols = atoms0.get_chemical_symbols()
+
+z = pos0[:, 2]
+sorted_idx = np.argsort(-z)
+
+layers = []
+current_layer = [sorted_idx[0]]
+z_tol = 0.6
+
+for idx in sorted_idx[1:]:
+    if abs(z[idx] - z[current_layer[0]]) < z_tol:
+        current_layer.append(idx)
+    else:
+        layers.append(current_layer)
+        current_layer = [idx]
+
+layers.append(current_layer)
+
+surface_layers = layers[:3]
+surface_indices = [i for layer in surface_layers for i in layer]
+
+surface_Cu = [i for i in surface_indices if symbols[i] == "Cu"]
+surface_O  = [i for i in surface_indices if symbols[i] == "O"]
+
+print("Surface Cu:", len(surface_Cu))
+print("Surface O :", len(surface_O))
+
+# -----------------------------
+# BUILD Cu-O PAIRS
+# -----------------------------
+CuO_pairs = [(i, j) for i in surface_Cu for j in surface_O]
+print("Total Cu-O pairs:", len(CuO_pairs))
+
+# -----------------------------
+# BUILD BOND MATRIX
+# -----------------------------
+bond = np.zeros((len(traj), len(CuO_pairs)), dtype=np.int8)
+
+for t, atoms in enumerate(traj):
+    if t % 200 == 0:
+        print(f"Building bonds: {t}/{len(traj)}")
+
+    pos = atoms.get_positions()
+
+    for p, (i, j) in enumerate(CuO_pairs):
+        d = np.linalg.norm(pos[i] - pos[j])
+        bond[t, p] = 1 if d < cutoff_CuO else 0
+
+# -----------------------------
+# FIND GOOD PAIR (break + reform)
+# -----------------------------
+good_pair_idx = None
+
+for idx in range(len(CuO_pairs)):
+    bonded = bond[:, idx]
+    changes = np.diff(bonded)
+
+    if np.any(changes == -1) and np.any(changes == 1):
+        good_pair_idx = idx
+        break
+
+if good_pair_idx is None:
+    print("❌ No suitable pair found")
+    exit()
+
+print("✅ Selected pair index:", good_pair_idx)
+
+i, j = CuO_pairs[good_pair_idx]
+bonded = bond[:, good_pair_idx]
+
+# -----------------------------
+# FIND BREAK & REFORMATION
+# -----------------------------
+break_frame = None
+reform_frame = None
+
+for t in range(1, len(bonded)):
+    if bonded[t-1] == 1 and bonded[t] == 0:
+        break_frame = t
+        break
+
+if break_frame is None:
+    print("❌ No breaking event found")
+    exit()
+
+for t in range(break_frame + 1, len(bonded)):
+    if bonded[t-1] == 0 and bonded[t] == 1:
+        reform_frame = t
+        break
+
+if reform_frame is None:
+    print("❌ No reforming event found")
+    exit()
+
+bonded_frame = break_frame - 1
+
+print("\nProcessed indices:")
+print("Bonded:", bonded_frame)
+print("Break :", break_frame)
+print("Reform:", reform_frame)
+
+# -----------------------------
+# CONVERT TO ORIGINAL FRAMES
+# -----------------------------
+orig_A = start + bonded_frame * sampling_step
+orig_B = start + break_frame * sampling_step
+orig_C = start + reform_frame * sampling_step
+
+print("\nOriginal frame indices:")
+print("A:", orig_A)
+print("B:", orig_B)
+print("C:", orig_C)
+
+# -----------------------------
+# EXTRACT STRUCTURES
+# -----------------------------
+atoms_A = full_traj[orig_A]
+atoms_B = full_traj[orig_B]
+atoms_C = full_traj[orig_C]
+
+# -----------------------------
+# SAVE XYZ FILES
+# -----------------------------
+write("Fig9_a_bonded.xyz", atoms_A, format="xyz")
+write("Fig9_b_broken.xyz", atoms_B, format="xyz")
+write("Fig9_c_reformed.xyz", atoms_C, format="xyz")
+
+print("\n✅ XYZ files saved")
+
+# -----------------------------
+# TIME CALCULATION
+# -----------------------------
+time_A = orig_A * timestep_ps
+time_B = orig_B * timestep_ps
+time_C = orig_C * timestep_ps
+
+# -----------------------------
+# SAVE OUTPUT FILE (CHEMCRAFT FORMAT)
+# -----------------------------
+chem_i = i + 1
+chem_j = j + 1
+
+with open("bond_event_info.txt", "w") as f:
+
+    f.write("=== Bond Breaking & Reformation Info ===\n\n")
+
+    f.write("Bond (Chemcraft indexing):\n")
+    f.write(f"Cu atom index = {chem_i}\n")
+    f.write(f"O  atom index = {chem_j}\n")
+    f.write(f"Pair = Cu({chem_i}) — O({chem_j})\n\n")
+
+    f.write("Processed frame indices:\n")
+    f.write(f"Bonded frame   = {bonded_frame}\n")
+    f.write(f"Break frame    = {break_frame}\n")
+    f.write(f"Reform frame   = {reform_frame}\n\n")
+
+    f.write("Original frame indices:\n")
+    f.write(f"A (bonded)   = {orig_A}\n")
+    f.write(f"B (broken)   = {orig_B}\n")
+    f.write(f"C (reformed) = {orig_C}\n\n")
+
+    f.write("Time (ps):\n")
+    f.write(f"A = {time_A:.4f}\n")
+    f.write(f"B = {time_B:.4f}\n")
+    f.write(f"C = {time_C:.4f}\n")
+
+print("✅ Saved: bond_event_info.txt")
