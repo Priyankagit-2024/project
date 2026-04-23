@@ -9,7 +9,7 @@ cutoff_CuO = 2.2
 cutoff_CuCu = 3.2
 
 sampling_step = 10
-use_last_n_frames = 50000
+use_last_n_frames = 100000
 
 max_lag = 2000
 origin_step = 10
