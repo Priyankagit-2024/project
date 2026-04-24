@@ -1,0 +1,179 @@
+import numpy as np
+import glob
+from ase.io import read
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# PARAMETERS
+# -----------------------------
+timestep_fs = 1.0
+timestep_ps = timestep_fs * 1e-3
+
+tolerance = 0.6
+max_layers = 5
+
+lag_fraction = 0.02   # small window (important)
+stride = 20           # speed control
+
+# -----------------------------
+# LOAD TRAJECTORY
+# -----------------------------
+print("Loading trajectory...", flush=True)
+
+traj_files = sorted(glob.glob("*.traj"))
+
+all_frames = []
+for i, file in enumerate(traj_files):
+    t = read(file, ":")
+    print(f"{file}: {len(t)} frames", flush=True)
+
+    if i == 0:
+        all_frames.extend(t)
+    else:
+        all_frames.extend(t[1:])
+
+traj = all_frames
+print("Total frames:", len(traj), flush=True)
+
+# -----------------------------
+# INITIAL STRUCTURE
+# -----------------------------
+atoms0 = traj[0]
+pos0 = atoms0.get_positions()
+symbols = atoms0.get_chemical_symbols()
+z = pos0[:, 2]
+
+# -----------------------------
+# LAYER DETECTION
+# -----------------------------
+layers = []
+unused = list(range(len(z)))
+
+while unused:
+    ref = unused[0]
+    layer = [i for i in unused if abs(z[i] - z[ref]) < tolerance]
+    layers.append(layer)
+    unused = [i for i in unused if i not in layer]
+
+layers = sorted(layers, key=lambda l: np.mean(z[l]), reverse=True)
+layers = layers[:max_layers]
+
+print(f"Detected {len(layers)} layers", flush=True)
+
+# -----------------------------
+# MSD + DIFFUSION FUNCTION
+# -----------------------------
+def compute_msd_diff(positions, label):
+
+    if len(positions[0]) < 2:
+        print(f"{label}: Not enough atoms", flush=True)
+        return None
+
+    n_frames = len(positions)
+    max_lag = int(n_frames * lag_fraction)
+
+    print(f"\n{label}: max_lag={max_lag}", flush=True)
+
+    msd = []
+    time = []
+
+    for dt in range(1, max_lag, stride):
+
+        if dt % 5000 == 0:
+            print(f"{label}: lag {dt}/{max_lag}", flush=True)
+
+        disp = positions[dt:] - positions[:-dt]
+        sq_disp = np.sum(disp**2, axis=2)
+
+        msd.append(np.mean(sq_disp))
+        time.append(dt * timestep_ps)
+
+    msd = np.array(msd)
+    time = np.array(time)
+
+    # -----------------------------
+    # SAVE MSD
+    # -----------------------------
+    np.savetxt(f"msd_{label}.dat", np.column_stack([time, msd]))
+
+    # -----------------------------
+    # FIT DIFFUSION
+    # -----------------------------
+    fit_start = int(0.2 * len(time))
+    fit_end   = int(0.6 * len(time))
+
+    if fit_end <= fit_start:
+        print(f"{label}: Fit failed", flush=True)
+        return None
+
+    coeff = np.polyfit(time[fit_start:fit_end], msd[fit_start:fit_end], 1)
+    slope = coeff[0]
+
+    if slope < 0:
+        print(f"{label}: Negative slope → D=0", flush=True)
+        slope = 0.0
+
+    D_A2_ps = slope / 4.0
+    D_m2_s  = D_A2_ps * 1e-8
+
+    print(f"{label}: D = {D_m2_s:.3e} m^2/s", flush=True)
+
+    # -----------------------------
+    # PLOT
+    # -----------------------------
+    plt.figure()
+    plt.plot(time, msd, label="MSD")
+
+    fit_time = time[fit_start:fit_end]
+    fit_line = slope * fit_time + coeff[1]
+
+    plt.plot(fit_time, fit_line, '--', label="Fit")
+
+    plt.xlabel("Time (ps)")
+    plt.ylabel("MSD (Å²)")
+    plt.title(label)
+    plt.legend()
+    plt.grid()
+
+    plt.savefig(f"msd_{label}.png", dpi=300)
+    plt.close()
+
+    return D_m2_s
+
+# -----------------------------
+# RUN FOR EACH LAYER
+# -----------------------------
+results = {}
+
+print("\nStarting layer-wise MSD + diffusion...\n", flush=True)
+
+for i, layer in enumerate(layers):
+
+    cu_atoms = [j for j in layer if symbols[j] == "Cu"]
+    o_atoms  = [j for j in layer if symbols[j] == "O"]
+
+    print(f"\nLayer {i+1}: Cu={len(cu_atoms)}, O={len(o_atoms)}", flush=True)
+
+    # Cu
+    if len(cu_atoms) > 1:
+        pos = np.array([atoms.get_positions()[cu_atoms] for atoms in traj])
+        results[f"Layer_{i+1}_Cu"] = compute_msd_diff(pos, f"Layer_{i+1}_Cu")
+
+    # O
+    if len(o_atoms) > 1:
+        pos = np.array([atoms.get_positions()[o_atoms] for atoms in traj])
+        results[f"Layer_{i+1}_O"] = compute_msd_diff(pos, f"Layer_{i+1}_O")
+
+# -----------------------------
+# SAVE RESULTS
+# -----------------------------
+with open("layer_diffusion_results.txt", "w") as f:
+
+    f.write("Layer-wise Diffusion Results\n")
+    f.write("--------------------------------\n\n")
+
+    for key, val in results.items():
+        if val is not None:
+            f.write(f"{key}: {val:.6e} m^2/s\n")
+
+print("\n✅ DONE. All MSD and diffusion files generated.", flush=True)
