@@ -1,0 +1,186 @@
+import numpy as np
+import glob
+from ase.io import read
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# LOAD TRAJECTORY (NO SAMPLING)
+# -----------------------------
+print("Loading trajectory...", flush=True)
+
+traj_files = sorted(glob.glob("*.traj"))
+
+all_frames = []
+for i, file in enumerate(traj_files):
+    t = read(file, ":")
+    print(f"{file}: {len(t)} frames", flush=True)
+
+    if i == 0:
+        all_frames.extend(t)
+    else:
+        all_frames.extend(t[1:])
+
+traj = all_frames
+print("Total frames:", len(traj), flush=True)
+
+# -----------------------------
+# TIME STEP
+# -----------------------------
+timestep_fs = 1.0
+timestep_ps = timestep_fs * 1e-3
+
+# -----------------------------
+# SELECT TRUE TOP SURFACE
+# -----------------------------
+atoms0 = traj[0]
+pos0 = atoms0.get_positions()
+symbols = atoms0.get_chemical_symbols()
+
+z = pos0[:, 2]
+z_sorted = np.sort(z)[::-1]
+
+z_top = z_sorted[0]
+
+for val in z_sorted:
+    if abs(val - z_top) > 0.5:
+        z_second = val
+        break
+
+z_tol = (z_top - z_second) / 2
+
+print(f"\nTop layer spacing: {z_top - z_second:.3f} Å", flush=True)
+print(f"Using z_tol = {z_tol:.3f} Å", flush=True)
+
+surface_indices = [i for i in range(len(z)) if z[i] > z_top - z_tol]
+
+surface_Cu = [i for i in surface_indices if symbols[i] == "Cu"]
+surface_O  = [i for i in surface_indices if symbols[i] == "O"]
+
+print("\nSurface atoms:", flush=True)
+print("Cu:", len(surface_Cu))
+print("O :", len(surface_O))
+
+# -----------------------------
+# POSITIONS
+# -----------------------------
+pos_Cu = np.array([atoms.get_positions()[surface_Cu] for atoms in traj])
+
+if len(surface_O) > 1:
+    pos_O = np.array([atoms.get_positions()[surface_O] for atoms in traj])
+else:
+    pos_O = None
+
+# -----------------------------
+# FAST MSD (NO SAMPLING)
+# -----------------------------
+def compute_msd(positions, label):
+
+    n_frames = len(positions)
+
+    # 🔥 CRITICAL CONTROLS
+    max_lag = int(n_frames * 0.02)   # only 2% lag
+    stride = 20                      # jump steps
+
+    print(f"\n{label}: max_lag = {max_lag}, stride = {stride}", flush=True)
+
+    msd = []
+    time = []
+
+    for dt in range(1, max_lag, stride):
+
+        if dt % 5000 == 0:
+            print(f"{label}: lag {dt}/{max_lag}", flush=True)
+
+        disp = positions[dt:] - positions[:-dt]
+        sq_disp = np.sum(disp**2, axis=2)
+
+        msd.append(np.mean(sq_disp))
+        time.append(dt * timestep_ps)
+
+    msd = np.array(msd)
+    time = np.array(time)
+
+    # -----------------------------
+    # SAVE DATA
+    # -----------------------------
+    np.savetxt(f"msd_{label}.dat", np.column_stack([time, msd]))
+
+    # -----------------------------
+    # FIT DIFFUSION
+    # -----------------------------
+    fit_start = int(0.2 * len(time))
+    fit_end   = int(0.6 * len(time))
+
+    if fit_end <= fit_start:
+        print(f"{label}: Fit failed", flush=True)
+        return None
+
+    coeff = np.polyfit(time[fit_start:fit_end], msd[fit_start:fit_end], 1)
+    slope = coeff[0]
+
+    # NEGATIVE FIX
+    if slope < 0:
+        print(f"{label}: Negative slope → D = 0", flush=True)
+        slope = 0.0
+
+    D_A2_ps = slope / 4.0
+    D_m2_s  = D_A2_ps * 1e-8
+
+    print(f"{label}: D = {D_m2_s:.3e} m^2/s", flush=True)
+
+    # -----------------------------
+    # PLOT
+    # -----------------------------
+    plt.figure()
+
+    plt.plot(time, msd, label="MSD")
+
+    fit_time = time[fit_start:fit_end]
+    fit_line = slope * fit_time + coeff[1]
+
+    plt.plot(fit_time, fit_line, '--', label="Fit")
+
+    plt.xlabel("Time (ps)")
+    plt.ylabel("MSD (Å²)")
+    plt.title(label)
+    plt.legend()
+    plt.grid()
+
+    plt.savefig(f"msd_{label}.png", dpi=300)
+    plt.close()
+
+    return D_m2_s
+
+
+# -----------------------------
+# RUN
+# -----------------------------
+print("\nComputing MSD...\n", flush=True)
+
+results = {}
+
+# Cu
+if len(surface_Cu) > 1:
+    results["Surface_Cu"] = compute_msd(pos_Cu, "Surface_Cu")
+else:
+    print("Skipping Cu")
+
+# O
+if pos_O is not None:
+    results["Surface_O"] = compute_msd(pos_O, "Surface_O")
+else:
+    print("Skipping O (no atoms)")
+
+# -----------------------------
+# SAVE RESULTS
+# -----------------------------
+with open("diffusion_results.txt", "w") as f:
+
+    f.write("Surface Diffusion Results\n")
+    f.write("--------------------------\n\n")
+
+    for key, val in results.items():
+        if val is not None:
+            f.write(f"{key}: {val:.6e} m^2/s\n")
+
+print("\n✅ DONE. Files generated.", flush=True)
